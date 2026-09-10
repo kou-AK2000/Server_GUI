@@ -38,7 +38,7 @@ DB、Docker、クラウドアカウント、環境変数は、現在のプロト
 この `app` ディレクトリで実行します。
 
 ```bash
-cd prototype/app
+cd app
 corepack enable
 corepack prepare pnpm@latest --activate
 pnpm install --frozen-lockfile
@@ -61,7 +61,7 @@ pnpm dev
 渡すものは、原則として次です。
 
 ```text
-prototype/app/
+app/
 ├─ src/               # アプリ本体
 ├─ package.json       # 使用パッケージ一覧
 ├─ pnpm-lock.yaml     # バージョン固定された依存関係
