@@ -176,22 +176,26 @@ const initialNodes: Node<DeviceData>[] = [
 const defaultConnectionData = (): ConnectionData => ({ connectionType: 'network', sourceInterface: '', targetInterface: '', notes: '' })
 
 const initialEdges: Edge<ConnectionData>[] = [
-  { id: 'web-sw', source: 'web01', target: 'sw01', type: 'editable', data: defaultConnectionData() },
-  { id: 'app-sw', source: 'app01', target: 'sw01', type: 'editable', data: defaultConnectionData() },
-  { id: 'db-sw', source: 'db01', target: 'sw01', type: 'editable', data: defaultConnectionData() },
-  { id: 'sw-router', source: 'sw01', target: 'router01', type: 'editable', data: defaultConnectionData() },
+  { id: 'web-sw', source: 'web01', target: 'sw01', sourceHandle: 'source-bottom', targetHandle: 'target-top', type: 'editable', data: defaultConnectionData() },
+  { id: 'app-sw', source: 'app01', target: 'sw01', sourceHandle: 'source-bottom', targetHandle: 'target-top', type: 'editable', data: defaultConnectionData() },
+  { id: 'db-sw', source: 'db01', target: 'sw01', sourceHandle: 'source-left', targetHandle: 'target-right', type: 'editable', data: defaultConnectionData() },
+  { id: 'sw-router', source: 'sw01', target: 'router01', sourceHandle: 'source-right', targetHandle: 'target-left', type: 'editable', data: defaultConnectionData() },
 ]
 
 function DeviceNode({ data }: NodeProps) {
   const device = data as DeviceData
   const color = device.color ?? kindColors[device.kind]
   return <div className="device-node" style={{ borderColor: color }}>
-    <Handle id="target-top" className="connection-handle" type="target" position={Position.Top} aria-label="上側の接続先" />
-    <Handle id="target-left" className="connection-handle" type="target" position={Position.Left} aria-label="左側の接続先" />
+    <Handle id="target-top" className="connection-handle target-handle" type="target" position={Position.Top} style={{ left: '35%' }} aria-label="上側の接続先" />
+    <Handle id="source-top" className="connection-handle source-handle" type="source" position={Position.Top} style={{ left: '65%' }} aria-label="上側の接続元" />
+    <Handle id="target-left" className="connection-handle target-handle" type="target" position={Position.Left} style={{ top: '35%' }} aria-label="左側の接続先" />
+    <Handle id="source-left" className="connection-handle source-handle" type="source" position={Position.Left} style={{ top: '65%' }} aria-label="左側の接続元" />
     <FontAwesomeIcon className="node-icon" icon={iconFor(device)} style={{ color }} />
     <div><small>{kindLabels[device.kind]}</small><strong>{device.displayName}</strong></div>
-    <Handle id="source-right" className="connection-handle" type="source" position={Position.Right} aria-label="右側の接続元" />
-    <Handle id="source-bottom" className="connection-handle" type="source" position={Position.Bottom} aria-label="下側の接続元" />
+    <Handle id="target-right" className="connection-handle target-handle" type="target" position={Position.Right} style={{ top: '35%' }} aria-label="右側の接続先" />
+    <Handle id="source-right" className="connection-handle source-handle" type="source" position={Position.Right} style={{ top: '65%' }} aria-label="右側の接続元" />
+    <Handle id="target-bottom" className="connection-handle target-handle" type="target" position={Position.Bottom} style={{ left: '35%' }} aria-label="下側の接続先" />
+    <Handle id="source-bottom" className="connection-handle source-handle" type="source" position={Position.Bottom} style={{ left: '65%' }} aria-label="下側の接続元" />
   </div>
 }
 
@@ -468,6 +472,10 @@ export default function App() {
     } : edge))
   }
 
+  const updateConnectionHandle = (edgeId: string, handle: 'sourceHandle' | 'targetHandle', value: string) => {
+    setEdges((current) => current.map((edge) => edge.id === edgeId ? { ...edge, [handle]: value } : edge))
+  }
+
   const updateWaypoint = (edgeId: string, position: { x: number; y: number }) => {
     setEdges((current) => current.map((edge) => edge.id === edgeId ? {
       ...edge,
@@ -490,6 +498,18 @@ export default function App() {
     setConnectionSelection(next)
   }
 
+  const chooseConnectionHandles = (source: Node<DeviceData>, target: Node<DeviceData>) => {
+    const sourceCenter = { x: source.position.x + (source.measured?.width ?? 150) / 2, y: source.position.y + (source.measured?.height ?? 64) / 2 }
+    const targetCenter = { x: target.position.x + (target.measured?.width ?? 150) / 2, y: target.position.y + (target.measured?.height ?? 64) / 2 }
+    const horizontal = Math.abs(sourceCenter.x - targetCenter.x) >= Math.abs(sourceCenter.y - targetCenter.y)
+    if (horizontal) return targetCenter.x >= sourceCenter.x
+      ? { sourceHandle: 'source-right', targetHandle: 'target-left' }
+      : { sourceHandle: 'source-left', targetHandle: 'target-right' }
+    return targetCenter.y >= sourceCenter.y
+      ? { sourceHandle: 'source-bottom', targetHandle: 'target-top' }
+      : { sourceHandle: 'source-top', targetHandle: 'target-bottom' }
+  }
+
   const connectSelectedNodes = () => {
     if (connectionNodeIds.length !== 2) return
     const [firstId, secondId] = connectionNodeIds
@@ -507,8 +527,7 @@ export default function App() {
       id: crypto.randomUUID(),
       source: source.id,
       target: target.id,
-      sourceHandle: horizontal ? 'source-right' : 'source-bottom',
-      targetHandle: horizontal ? 'target-left' : 'target-top',
+      ...chooseConnectionHandles(source, target),
       type: 'editable',
       data: defaultConnectionData(),
     }])
@@ -517,24 +536,18 @@ export default function App() {
   }
 
   const optimizeConnections = (layoutNodes = nodes, resetManualWaypoint = false) => {
-    const center = (node: Node<DeviceData>) => ({ x: node.position.x + (node.measured?.width ?? 150) / 2, y: node.position.y + (node.measured?.height ?? 64) / 2 })
     setEdges((current) => current.map((edge) => {
       if (edge.data?.waypoint && !resetManualWaypoint) return edge
       const first = layoutNodes.find((node) => node.id === edge.source)
       const second = layoutNodes.find((node) => node.id === edge.target)
       if (!first || !second) return edge
-      const firstCenter = center(first)
-      const secondCenter = center(second)
-      const horizontal = Math.abs(firstCenter.x - secondCenter.x) >= Math.abs(firstCenter.y - secondCenter.y)
       const source = first
       const target = second
-      const sourceTowardRightOrDown = horizontal ? secondCenter.x >= firstCenter.x : secondCenter.y >= firstCenter.y
       return {
         ...edge,
         source: source.id,
         target: target.id,
-        sourceHandle: horizontal ? (sourceTowardRightOrDown ? 'source-right' : 'source-bottom') : (sourceTowardRightOrDown ? 'source-bottom' : 'source-right'),
-        targetHandle: horizontal ? (sourceTowardRightOrDown ? 'target-left' : 'target-top') : (sourceTowardRightOrDown ? 'target-top' : 'target-left'),
+        ...chooseConnectionHandles(source, target),
         type: 'editable',
         data: { ...defaultConnectionData(), ...edge.data, waypoint: undefined },
       }
@@ -732,7 +745,7 @@ export default function App() {
             <label>色<input className="color-input" type="color" value={customColor} onChange={(event) => setCustomColor(event.target.value)} /></label>
             <button className="primary" onClick={addCustomDevice}>構成図に追加</button>
           </div>}
-          <div className="palette-note">部品の接続は、部品に表示されるハンドルをドラッグして作成します。</div>
+          <div className="palette-note">接続モードでは、橙の接続元から青の接続先へドラッグして接続します。上下左右すべての支点を使えます。</div>
         </aside>
 
         <div className="panel-resizer" role="separator" aria-label="部品一覧の幅を変更" aria-orientation="vertical" title="ドラッグして部品一覧の幅を変更" onPointerDown={(event) => startPanelResize('palette', event)} />
@@ -785,7 +798,7 @@ export default function App() {
           {selectedNode ? (
             <PropertyEditor node={selectedNode} nodes={nodes} edges={edges} onChange={updateNode} onSelectConnection={selectConnection} onOpenDetails={() => selectedNode.data.kind === 'server' && setView({ level: 2, serverId: selectedNode.id })} />
           ) : selectedEdge ? (
-            <ConnectionEditor edge={selectedEdge} nodes={nodes} onChange={updateConnection} />
+            <ConnectionEditor edge={selectedEdge} nodes={nodes} onChange={updateConnection} onChangeHandle={updateConnectionHandle} />
           ) : (
             <div className="empty-state">部品または接続線を選択してください。</div>
           )}
@@ -876,13 +889,15 @@ function PropertyEditor({ node, nodes, edges, onChange, onSelectConnection, onOp
   </div>
 }
 
-function ConnectionEditor({ edge, nodes, onChange }: { edge: Edge<ConnectionData>; nodes: Node<DeviceData>[]; onChange: (edgeId: string, field: ConnectionField, value: string) => void }) {
+function ConnectionEditor({ edge, nodes, onChange, onChangeHandle }: { edge: Edge<ConnectionData>; nodes: Node<DeviceData>[]; onChange: (edgeId: string, field: ConnectionField, value: string) => void; onChangeHandle: (edgeId: string, handle: 'sourceHandle' | 'targetHandle', value: string) => void }) {
   const data = { ...defaultConnectionData(), ...edge.data }
   const sourceName = nodes.find((node) => node.id === edge.source)?.data.displayName ?? edge.source
   const targetName = nodes.find((node) => node.id === edge.target)?.data.displayName ?? edge.target
   return <div className="edge-details connection-editor">
     <strong>{sourceName} → {targetName}</strong>
     <p>接続線そのものの情報です。ここで変更した内容は、両方の部品の「接続先情報」に反映されます。</p>
+    <label>接続元の支点<select value={edge.sourceHandle ?? 'source-right'} onChange={(event) => onChangeHandle(edge.id, 'sourceHandle', event.target.value)}><option value="source-top">上</option><option value="source-right">右</option><option value="source-bottom">下</option><option value="source-left">左</option></select></label>
+    <label>接続先の支点<select value={edge.targetHandle ?? 'target-left'} onChange={(event) => onChangeHandle(edge.id, 'targetHandle', event.target.value)}><option value="target-top">上</option><option value="target-right">右</option><option value="target-bottom">下</option><option value="target-left">左</option></select></label>
     <label>接続種別<select value={data.connectionType} onChange={(event) => onChange(edge.id, 'connectionType', event.target.value)}><option value="network">ネットワーク</option><option value="management">管理ネットワーク</option><option value="storage">ストレージ</option><option value="internet">インターネット</option><option value="other">その他</option></select></label>
     <label>接続元インターフェース<input value={data.sourceInterface} onChange={(event) => onChange(edge.id, 'sourceInterface', event.target.value)} placeholder="例: eth0" /></label>
     <label>接続先インターフェース<input value={data.targetInterface} onChange={(event) => onChange(edge.id, 'targetInterface', event.target.value)} placeholder="例: Gi0/1" /></label>
