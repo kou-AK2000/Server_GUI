@@ -1,18 +1,24 @@
-import { useMemo, useRef, useState } from 'react'
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
 import {
   addEdge,
   Background,
+  BaseEdge,
   Controls,
+  EdgeLabelRenderer,
+  getSmoothStepPath,
   Handle,
   MiniMap,
   Position,
   ReactFlow,
   type Connection,
   type Edge,
+  type EdgeProps,
   type Node,
   type NodeProps,
   useEdgesState,
   useNodesState,
+  useReactFlow,
 } from '@xyflow/react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core'
@@ -50,11 +56,12 @@ type DeviceData = {
 
 type Selection = { type: 'node'; id: string } | { type: 'edge'; id: string } | null
 type Validation = { severity: 'warning' | 'info'; message: string; nodeIds: string[] }
-type ConnectionData = { connectionType: string; sourceInterface: string; targetInterface: string; notes: string }
-type ConnectionField = keyof ConnectionData
+type ConnectionData = { connectionType: string; sourceInterface: string; targetInterface: string; notes: string; waypoint?: { x: number; y: number } }
+type ConnectionField = Exclude<keyof ConnectionData, 'waypoint'>
 type StoredProject = { schemaVersion: '1.1'; id: string; name: string; nodes: Node<DeviceData>[]; edges: Edge<ConnectionData>[]; updatedAt: string }
 
 const browserStorageKey = 'server-design-gui.projects.v1'
+const EdgeActionsContext = createContext<{ updateWaypoint: (edgeId: string, position: { x: number; y: number }) => void } | null>(null)
 
 const kindLabels: Record<DeviceKind, string> = {
   server: 'サーバー',
@@ -169,24 +176,52 @@ const initialNodes: Node<DeviceData>[] = [
 const defaultConnectionData = (): ConnectionData => ({ connectionType: 'network', sourceInterface: '', targetInterface: '', notes: '' })
 
 const initialEdges: Edge<ConnectionData>[] = [
-  { id: 'web-sw', source: 'web01', target: 'sw01', type: 'smoothstep', data: defaultConnectionData() },
-  { id: 'app-sw', source: 'app01', target: 'sw01', type: 'smoothstep', data: defaultConnectionData() },
-  { id: 'db-sw', source: 'db01', target: 'sw01', type: 'smoothstep', data: defaultConnectionData() },
-  { id: 'sw-router', source: 'sw01', target: 'router01', type: 'smoothstep', data: defaultConnectionData() },
+  { id: 'web-sw', source: 'web01', target: 'sw01', type: 'editable', data: defaultConnectionData() },
+  { id: 'app-sw', source: 'app01', target: 'sw01', type: 'editable', data: defaultConnectionData() },
+  { id: 'db-sw', source: 'db01', target: 'sw01', type: 'editable', data: defaultConnectionData() },
+  { id: 'sw-router', source: 'sw01', target: 'router01', type: 'editable', data: defaultConnectionData() },
 ]
 
 function DeviceNode({ data }: NodeProps) {
   const device = data as DeviceData
   const color = device.color ?? kindColors[device.kind]
   return <div className="device-node" style={{ borderColor: color }}>
-    <Handle type="target" position={Position.Left} />
+    <Handle id="target-top" className="connection-handle" type="target" position={Position.Top} aria-label="上側の接続先" />
+    <Handle id="target-left" className="connection-handle" type="target" position={Position.Left} aria-label="左側の接続先" />
     <FontAwesomeIcon className="node-icon" icon={iconFor(device)} style={{ color }} />
     <div><small>{kindLabels[device.kind]}</small><strong>{device.displayName}</strong></div>
-    <Handle type="source" position={Position.Right} />
+    <Handle id="source-right" className="connection-handle" type="source" position={Position.Right} aria-label="右側の接続元" />
+    <Handle id="source-bottom" className="connection-handle" type="source" position={Position.Bottom} aria-label="下側の接続元" />
   </div>
 }
 
 const nodeTypes = { device: DeviceNode }
+
+function EditableEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, selected, style }: EdgeProps<Edge<ConnectionData>>) {
+  const actions = useContext(EdgeActionsContext)
+  const { screenToFlowPosition } = useReactFlow()
+  const [smoothPath, defaultLabelX, defaultLabelY] = getSmoothStepPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition })
+  const waypoint = data?.waypoint
+  const edgePath = waypoint ? `M ${sourceX},${sourceY} L ${waypoint.x},${waypoint.y} L ${targetX},${targetY}` : smoothPath
+  const labelX = waypoint?.x ?? defaultLabelX
+  const labelY = waypoint?.y ?? defaultLabelY
+
+  const startWaypointDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const update = (pointerEvent: PointerEvent) => actions?.updateWaypoint(id, screenToFlowPosition({ x: pointerEvent.clientX, y: pointerEvent.clientY }))
+    const finish = () => {
+      window.removeEventListener('pointermove', update)
+      window.removeEventListener('pointerup', finish)
+    }
+    window.addEventListener('pointermove', update)
+    window.addEventListener('pointerup', finish)
+  }
+
+  return <><BaseEdge id={id} path={edgePath} style={style} interactionWidth={20} /><EdgeLabelRenderer><div className={selected ? 'edge-waypoint visible nopan nodrag' : 'edge-waypoint nopan nodrag'} style={{ transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)` }} onPointerDown={startWaypointDrag} title="ドラッグして線の経由点を移動" /></EdgeLabelRenderer></>
+}
+
+const edgeTypes = { editable: EditableEdge }
 
 function download(filename: string, content: string, type: string) {
   const blob = new Blob([content], { type })
@@ -212,7 +247,7 @@ function normalizeNodes(nodes: Node<DeviceData>[]) {
 }
 
 function normalizeEdges(edges: Edge<ConnectionData>[]) {
-  return edges.map((edge) => ({ ...edge, type: edge.type ?? 'smoothstep', data: { ...defaultConnectionData(), ...edge.data } }))
+  return edges.map((edge) => ({ ...edge, type: 'editable', data: { ...defaultConnectionData(), ...edge.data } }))
 }
 
 function readBrowserProjects(): StoredProject[] {
@@ -233,15 +268,91 @@ export default function App() {
   const [customName, setCustomName] = useState('')
   const [customIcon, setCustomIcon] = useState<IconKey>('box')
   const [customColor, setCustomColor] = useState('#475569')
+  const [isConnectionMode, setIsConnectionMode] = useState(false)
+  const [connectionNodeIds, setConnectionNodeIds] = useState<string[]>([])
   const [projectId, setProjectId] = useState<string>(() => crypto.randomUUID())
   const [projectName, setProjectName] = useState('新しいシステム')
   const [savedProjects, setSavedProjects] = useState<StoredProject[]>(readBrowserProjects)
   const [showProjectLibrary, setShowProjectLibrary] = useState(false)
   const [saveMessage, setSaveMessage] = useState('')
+  const [openMenu, setOpenMenu] = useState<'file' | 'edit' | 'view' | null>(null)
+  const [panelWidths, setPanelWidths] = useState({ palette: 200, properties: 272 })
+  const [workspaceHeight, setWorkspaceHeight] = useState(544)
   const fileInput = useRef<HTMLInputElement>(null)
+  const menuBarRef = useRef<HTMLElement>(null)
+
+  useEffect(() => {
+    if (!openMenu) return
+    const closeMenuOnOutsideClick = (event: PointerEvent) => {
+      if (event.target instanceof Element && !menuBarRef.current?.contains(event.target)) setOpenMenu(null)
+    }
+    window.addEventListener('pointerdown', closeMenuOnOutsideClick)
+    return () => window.removeEventListener('pointerdown', closeMenuOnOutsideClick)
+  }, [openMenu])
+
+  useEffect(() => {
+    if (!showProjectLibrary) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowProjectLibrary(false)
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [showProjectLibrary])
+
+  const startPanelResize = (panel: 'palette' | 'properties', event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    const startX = event.clientX
+    const initialWidth = panelWidths[panel]
+    const direction = panel === 'palette' ? 1 : -1
+    const onMove = (moveEvent: PointerEvent) => {
+      const width = Math.min(440, Math.max(180, initialWidth + ((moveEvent.clientX - startX) * direction)))
+      setPanelWidths((current) => ({ ...current, [panel]: width }))
+    }
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
+  const startWorkspaceHeightResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    const startY = event.clientY
+    const initialHeight = workspaceHeight
+    const onMove = (moveEvent: PointerEvent) => setWorkspaceHeight(Math.min(980, Math.max(420, initialHeight + moveEvent.clientY - startY)))
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
+  const workspaceStyle = {
+    '--palette-width': `${panelWidths.palette}px`,
+    '--properties-width': `${panelWidths.properties}px`,
+    '--workspace-height': `${workspaceHeight}px`,
+  } as CSSProperties
+
+  const runMenuAction = (action: () => void) => () => {
+    action()
+    setOpenMenu(null)
+  }
 
   const selectedNode = selection?.type === 'node' ? nodes.find((node) => node.id === selection.id) : undefined
   const selectedEdge = selection?.type === 'edge' ? edges.find((edge) => edge.id === selection.id) : undefined
+  const focusedNodeId = selectedNode?.id
+  const focusedEdgeIds = useMemo(() => new Set(focusedNodeId ? edges.filter((edge) => edge.source === focusedNodeId || edge.target === focusedNodeId).map((edge) => edge.id) : []), [focusedNodeId, edges])
+  const focusedNeighborIds = useMemo(() => new Set(focusedNodeId ? edges.flatMap((edge) => edge.source === focusedNodeId ? [edge.target] : edge.target === focusedNodeId ? [edge.source] : []) : []), [focusedNodeId, edges])
+  const flowNodes = useMemo(() => nodes.map((node) => {
+    const focusClass = focusedNodeId ? node.id === focusedNodeId ? 'focus-selected' : focusedNeighborIds.has(node.id) ? 'focus-neighbor' : 'focus-muted' : ''
+    return { ...node, className: [node.className, focusClass].filter(Boolean).join(' '), style: { ...node.style, opacity: focusedNodeId && node.id !== focusedNodeId && !focusedNeighborIds.has(node.id) ? .28 : 1 } }
+  }), [nodes, focusedNodeId, focusedNeighborIds])
+  const flowEdges = useMemo(() => edges.map((edge) => {
+    const isFocused = focusedEdgeIds.has(edge.id)
+    return { ...edge, className: [edge.className, focusedNodeId ? isFocused ? 'focus-connected-edge' : 'focus-muted-edge' : ''].filter(Boolean).join(' '), style: focusedNodeId ? { ...edge.style, stroke: isFocused ? '#2563eb' : '#94a3b8', strokeWidth: isFocused ? 3 : 1, opacity: isFocused ? 1 : .18 } : edge.style }
+  }), [edges, focusedNodeId, focusedEdgeIds])
   const viewServerId = view.level === 1 ? undefined : view.serverId
   const viewServer = viewServerId ? nodes.find((node) => node.id === viewServerId) : undefined
 
@@ -357,6 +468,116 @@ export default function App() {
     } : edge))
   }
 
+  const updateWaypoint = (edgeId: string, position: { x: number; y: number }) => {
+    setEdges((current) => current.map((edge) => edge.id === edgeId ? {
+      ...edge,
+      data: { ...defaultConnectionData(), ...edge.data, waypoint: position },
+    } : edge))
+  }
+
+  const selectConnection = (edgeId: string) => {
+    setSelection({ type: 'edge', id: edgeId })
+    setEdges((current) => current.map((edge) => ({ ...edge, selected: edge.id === edgeId })))
+  }
+
+  const setConnectionSelection = (ids: string[]) => {
+    setConnectionNodeIds(ids)
+    setNodes((current) => current.map((node) => ({ ...node, className: ids.includes(node.id) ? 'connection-selected' : undefined })))
+  }
+
+  const toggleConnectionSelection = (nodeId: string) => {
+    const next = connectionNodeIds.includes(nodeId) ? connectionNodeIds.filter((id) => id !== nodeId) : [...connectionNodeIds, nodeId]
+    setConnectionSelection(next)
+  }
+
+  const connectSelectedNodes = () => {
+    if (connectionNodeIds.length !== 2) return
+    const [firstId, secondId] = connectionNodeIds
+    const first = nodes.find((node) => node.id === firstId)
+    const second = nodes.find((node) => node.id === secondId)
+    if (!first || !second) return
+    if (edges.some((edge) => (edge.source === first.id && edge.target === second.id) || (edge.source === second.id && edge.target === first.id))) {
+      setSaveMessage('選択した2部品はすでに接続されています。')
+      return
+    }
+    const horizontal = Math.abs(first.position.x - second.position.x) >= Math.abs(first.position.y - second.position.y)
+    const source = horizontal ? (first.position.x <= second.position.x ? first : second) : (first.position.y <= second.position.y ? first : second)
+    const target = source.id === first.id ? second : first
+    setEdges((current) => [...current, {
+      id: crypto.randomUUID(),
+      source: source.id,
+      target: target.id,
+      sourceHandle: horizontal ? 'source-right' : 'source-bottom',
+      targetHandle: horizontal ? 'target-left' : 'target-top',
+      type: 'editable',
+      data: defaultConnectionData(),
+    }])
+    setConnectionSelection([])
+    setSaveMessage(`${source.data.displayName} → ${target.data.displayName} を接続しました。`)
+  }
+
+  const optimizeConnections = (layoutNodes = nodes, resetManualWaypoint = false) => {
+    const center = (node: Node<DeviceData>) => ({ x: node.position.x + (node.measured?.width ?? 150) / 2, y: node.position.y + (node.measured?.height ?? 64) / 2 })
+    setEdges((current) => current.map((edge) => {
+      if (edge.data?.waypoint && !resetManualWaypoint) return edge
+      const first = layoutNodes.find((node) => node.id === edge.source)
+      const second = layoutNodes.find((node) => node.id === edge.target)
+      if (!first || !second) return edge
+      const firstCenter = center(first)
+      const secondCenter = center(second)
+      const horizontal = Math.abs(firstCenter.x - secondCenter.x) >= Math.abs(firstCenter.y - secondCenter.y)
+      const source = first
+      const target = second
+      const sourceTowardRightOrDown = horizontal ? secondCenter.x >= firstCenter.x : secondCenter.y >= firstCenter.y
+      return {
+        ...edge,
+        source: source.id,
+        target: target.id,
+        sourceHandle: horizontal ? (sourceTowardRightOrDown ? 'source-right' : 'source-bottom') : (sourceTowardRightOrDown ? 'source-bottom' : 'source-right'),
+        targetHandle: horizontal ? (sourceTowardRightOrDown ? 'target-left' : 'target-top') : (sourceTowardRightOrDown ? 'target-top' : 'target-left'),
+        type: 'editable',
+        data: { ...defaultConnectionData(), ...edge.data, waypoint: undefined },
+      }
+    }))
+  }
+
+  const autoArrangeDiagram = () => {
+    const indegree = new Map(nodes.map((node) => [node.id, 0]))
+    const depth = new Map(nodes.map((node) => [node.id, 0]))
+    edges.forEach((edge) => indegree.set(edge.target, (indegree.get(edge.target) ?? 0) + 1))
+    const queue = nodes.filter((node) => (indegree.get(node.id) ?? 0) === 0).map((node) => node.id)
+    const visited = new Set<string>()
+
+    while (queue.length) {
+      const sourceId = queue.shift()!
+      if (visited.has(sourceId)) continue
+      visited.add(sourceId)
+      edges.filter((edge) => edge.source === sourceId).forEach((edge) => {
+        depth.set(edge.target, Math.max(depth.get(edge.target) ?? 0, (depth.get(sourceId) ?? 0) + 1))
+        indegree.set(edge.target, (indegree.get(edge.target) ?? 1) - 1)
+        if ((indegree.get(edge.target) ?? 0) <= 0) queue.push(edge.target)
+      })
+    }
+
+    const lastDepth = Math.max(...depth.values(), 0)
+    nodes.filter((node) => !visited.has(node.id)).forEach((node, index) => depth.set(node.id, lastDepth + index + 1))
+    const layers = new Map<number, Node<DeviceData>[]>()
+    nodes.forEach((node) => {
+      const layer = depth.get(node.id) ?? 0
+      layers.set(layer, [...(layers.get(layer) ?? []), node])
+    })
+    const positioned = nodes.map((node) => {
+      const layer = depth.get(node.id) ?? 0
+      const siblings = [...(layers.get(layer) ?? [])].sort((a, b) => a.position.y - b.position.y || a.data.displayName.localeCompare(b.data.displayName, 'ja'))
+      const index = siblings.findIndex((item) => item.id === node.id)
+      return { ...node, position: { x: 100 + layer * 300, y: 110 + index * 150 } }
+    })
+    setNodes(positioned)
+    optimizeConnections(positioned, true)
+    setConnectionSelection([])
+    setSaveMessage('構成図と接続線を自動整列しました。')
+  }
+
   const saveProject = () => {
     download(`${projectName || 'server-design-project'}.json`, JSON.stringify({ schemaVersion: '1.1', id: projectId, name: projectName, nodes, edges }, null, 2), 'application/json')
   }
@@ -444,26 +665,54 @@ export default function App() {
             {view.level > 2 && <><span>›</span><span>レベル{view.level}</span></>}
           </div>
         </div>
-        <div className="header-actions">
-          <button onClick={createNewProject}>新規</button>
-          <button onClick={saveInBrowser}>ブラウザ保存</button>
-          <button onClick={() => setShowProjectLibrary(true)}>保存済みを開く</button>
-          <button onClick={() => fileInput.current?.click()}>JSONを開く</button>
-          <button className="primary" onClick={saveProject}>JSON書出し</button>
-          <button onClick={exportCsv}>CSV出力</button>
-          <input ref={fileInput} className="hidden" type="file" accept="application/json,.json" onChange={openProject} />
-        </div>
       </header>
 
+      <nav ref={menuBarRef} className="app-menu-bar" aria-label="アプリケーションメニュー" onKeyDown={(event) => event.key === 'Escape' && setOpenMenu(null)}>
+        <div className="menu-group">
+          <button className={openMenu === 'file' ? 'menu-trigger active' : 'menu-trigger'} aria-haspopup="menu" aria-expanded={openMenu === 'file'} onClick={() => setOpenMenu((current) => current === 'file' ? null : 'file')}>ファイル</button>
+          {openMenu === 'file' && <div className="menu-dropdown" role="menu">
+            <button role="menuitem" onClick={runMenuAction(createNewProject)}>新規作成</button>
+            <span className="menu-divider" />
+            <button role="menuitem" onClick={runMenuAction(saveInBrowser)}>ブラウザに保存</button>
+            <button role="menuitem" onClick={runMenuAction(() => setShowProjectLibrary(true))}>保存済みを開く</button>
+            <span className="menu-divider" />
+            <button role="menuitem" onClick={runMenuAction(() => fileInput.current?.click())}>JSONを開く</button>
+            <button role="menuitem" onClick={runMenuAction(saveProject)}>JSONを書き出し</button>
+            <button role="menuitem" onClick={runMenuAction(exportCsv)}>CSVを出力</button>
+          </div>}
+        </div>
+        <div className="menu-group">
+          <button className={openMenu === 'edit' ? 'menu-trigger active' : 'menu-trigger'} aria-haspopup="menu" aria-expanded={openMenu === 'edit'} onClick={() => setOpenMenu((current) => current === 'edit' ? null : 'edit')}>編集</button>
+          {openMenu === 'edit' && <div className="menu-dropdown" role="menu">
+            <button role="menuitem" disabled={!selection} onClick={runMenuAction(deleteSelected)}>選択中の部品・接続を削除</button>
+            <span className="menu-divider" />
+            <button role="menuitem" disabled={view.level !== 1} onClick={runMenuAction(autoArrangeDiagram)}>構成図を自動整列</button>
+            <button role="menuitem" disabled={view.level !== 1} onClick={runMenuAction(() => { optimizeConnections(nodes, true); setSaveMessage('接続線の支点と経路を自動整列しました。') })}>線を自動整列</button>
+          </div>}
+        </div>
+        <div className="menu-group">
+          <button className={openMenu === 'view' ? 'menu-trigger active' : 'menu-trigger'} aria-haspopup="menu" aria-expanded={openMenu === 'view'} onClick={() => setOpenMenu((current) => current === 'view' ? null : 'view')}>表示</button>
+          {openMenu === 'view' && <div className="menu-dropdown" role="menu">
+            <button role="menuitem" onClick={runMenuAction(() => setView({ level: 1 }))}>レベル1 全体構成図</button>
+            <button role="menuitem" disabled={view.level !== 1} onClick={runMenuAction(() => setIsConnectionMode((current) => !current))}>{isConnectionMode ? '接続モードを終了' : '接続モードを開始'}</button>
+            <span className="menu-divider" />
+            <button role="menuitem" disabled={view.level !== 1} onClick={runMenuAction(() => { setPanelWidths({ palette: 200, properties: 272 }); setWorkspaceHeight(544); setSaveMessage('表示領域のサイズを初期値に戻しました。') })}>表示領域のサイズを戻す</button>
+          </div>}
+        </div>
+        <input ref={fileInput} className="hidden" type="file" accept="application/json,.json" onChange={openProject} />
+      </nav>
+
       {saveMessage && <div className="save-message" role="status">{saveMessage}</div>}
-      {showProjectLibrary && <section className="project-library panel" role="dialog" aria-label="保存済みシステム">
-        <div className="panel-heading"><div><h2>保存済みシステム</h2><p>ブラウザ内に保存した、レベル1〜4を含むシステムセットです。</p></div><button onClick={() => setShowProjectLibrary(false)}>閉じる</button></div>
-        {savedProjects.length ? <ul>{savedProjects.map((project) => <li key={project.id}><div><strong>{project.name}</strong><small>{new Date(project.updatedAt).toLocaleString('ja-JP')} / {project.nodes.length} 部品</small></div><button className="primary" onClick={() => openBrowserProject(project)}>開く</button></li>)}</ul> : <div className="empty-state">まだブラウザ内に保存されたシステムはありません。</div>}
-        <p className="library-note">この保存領域は、現在のブラウザ・このMacだけで利用できます。共有やバックアップにはJSON書出しを使います。</p>
-      </section>}
+      {showProjectLibrary && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowProjectLibrary(false) }}>
+        <section className="project-library panel" role="dialog" aria-modal="true" aria-label="保存済みシステム" onMouseDown={(event) => event.stopPropagation()}>
+          <div className="panel-heading"><div><h2>保存済みシステム</h2><p>ブラウザ内に保存した、レベル1〜4を含むシステムセットです。</p></div><button onClick={() => setShowProjectLibrary(false)}>閉じる</button></div>
+          {savedProjects.length ? <ul>{savedProjects.map((project) => <li key={project.id}><div><strong>{project.name}</strong><small>{new Date(project.updatedAt).toLocaleString('ja-JP')} / {project.nodes.length} 部品</small></div><button className="primary" onClick={() => openBrowserProject(project)}>開く</button></li>)}</ul> : <div className="empty-state">まだブラウザ内に保存されたシステムはありません。</div>}
+          <p className="library-note">この保存領域は、現在のブラウザ・このMacだけで利用できます。共有やバックアップにはJSON書出しを使います。</p>
+        </section>
+      </div>}
 
       {view.level === 1 ? <>
-      <section className="workspace">
+      <section className="workspace" style={workspaceStyle}>
         <aside className="palette panel">
           <h2>部品一覧</h2>
           <p>クリックして部品を追加</p>
@@ -486,35 +735,55 @@ export default function App() {
           <div className="palette-note">部品の接続は、部品に表示されるハンドルをドラッグして作成します。</div>
         </aside>
 
+        <div className="panel-resizer" role="separator" aria-label="部品一覧の幅を変更" aria-orientation="vertical" title="ドラッグして部品一覧の幅を変更" onPointerDown={(event) => startPanelResize('palette', event)} />
+
         <section className="canvas panel" aria-label="構成図キャンバス">
-          <div className="canvas-title"><span>全体構成図</span><small>{nodes.length} 部品 / {edges.length} 接続</small></div>
-          <div className="flow-wrap">
-            <ReactFlow
-              nodes={nodes}
-              edges={edges}
+          <div className="canvas-title"><span>全体構成図</span><div className="canvas-actions"><small>{nodes.length} 部品 / {edges.length} 接続</small><button className="auto-layout" onClick={autoArrangeDiagram}>構成図を自動整列</button><button className="auto-layout" onClick={() => { optimizeConnections(nodes, true); setSaveMessage('接続線の支点と経路を自動整列しました。') }}>線を自動整列</button>{connectionNodeIds.length > 0 && <button className={connectionNodeIds.length === 2 ? 'selected-connect active' : 'selected-connect'} disabled={connectionNodeIds.length !== 2} onClick={connectSelectedNodes}>{connectionNodeIds.length === 2 ? '選択した2部品を接続' : `あと${2 - connectionNodeIds.length}部品を選択`}</button>}<button className={isConnectionMode ? 'connection-mode active' : 'connection-mode'} onClick={() => setIsConnectionMode((current) => !current)}>{isConnectionMode ? '接続モード中：支点をドラッグ' : '接続モード'}</button></div></div>
+          <div className={isConnectionMode ? 'flow-wrap is-connection-mode' : 'flow-wrap'}>
+            <EdgeActionsContext.Provider value={{ updateWaypoint }}><ReactFlow
+              nodes={flowNodes}
+              edges={flowEdges}
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
-              onConnect={(connection: Connection) => setEdges((current) => addEdge({ ...connection, id: crypto.randomUUID(), type: 'smoothstep', data: defaultConnectionData() }, current))}
-              onNodeClick={(_, node) => setSelection({ type: 'node', id: node.id })}
+              onNodeDragStop={(_, movedNode) => {
+                const layoutNodes = nodes.map((node) => node.id === movedNode.id ? { ...node, position: movedNode.position, measured: movedNode.measured } : node)
+                optimizeConnections(layoutNodes)
+              }}
+              onConnect={(connection: Connection) => setEdges((current) => addEdge({ ...connection, id: crypto.randomUUID(), type: 'editable', data: defaultConnectionData() }, current))}
+              onConnectStart={() => setIsConnectionMode(true)}
+              onConnectEnd={() => setIsConnectionMode(false)}
+              onNodeClick={(event, node) => {
+                setSelection({ type: 'node', id: node.id })
+                setEdges((current) => current.map((edge) => ({ ...edge, selected: false })))
+                if (event.metaKey || event.ctrlKey) toggleConnectionSelection(node.id)
+              }}
               onNodeDoubleClick={(_, node) => {
                 if ((node.data as DeviceData).kind === 'server') setView({ level: 2, serverId: node.id })
               }}
-              onEdgeClick={(_, edge) => setSelection({ type: 'edge', id: edge.id })}
+              onEdgeClick={(_, edge) => selectConnection(edge.id)}
+              onPaneClick={() => {
+                setSelection(null)
+                setConnectionSelection([])
+                setEdges((current) => current.map((edge) => ({ ...edge, selected: false })))
+              }}
               nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
               fitView
               deleteKeyCode={null}
             >
               <Background gap={18} size={1} color="#cbd5e1" />
               <Controls />
               <MiniMap nodeColor={(node) => (node.data as DeviceData).color ?? kindColors[(node.data as DeviceData).kind]} zoomable pannable />
-            </ReactFlow>
+            </ReactFlow></EdgeActionsContext.Provider>
           </div>
         </section>
+
+        <div className="panel-resizer" role="separator" aria-label="プロパティの幅を変更" aria-orientation="vertical" title="ドラッグしてプロパティの幅を変更" onPointerDown={(event) => startPanelResize('properties', event)} />
 
         <aside className="properties panel">
           <div className="panel-heading"><h2>プロパティ</h2>{selection && <button className="text-button danger" onClick={deleteSelected}>削除</button>}</div>
           {selectedNode ? (
-            <PropertyEditor node={selectedNode} nodes={nodes} edges={edges} onChange={updateNode} onSelectConnection={(edgeId) => setSelection({ type: 'edge', id: edgeId })} onOpenDetails={() => selectedNode.data.kind === 'server' && setView({ level: 2, serverId: selectedNode.id })} />
+            <PropertyEditor node={selectedNode} nodes={nodes} edges={edges} onChange={updateNode} onSelectConnection={selectConnection} onOpenDetails={() => selectedNode.data.kind === 'server' && setView({ level: 2, serverId: selectedNode.id })} />
           ) : selectedEdge ? (
             <ConnectionEditor edge={selectedEdge} nodes={nodes} onChange={updateConnection} />
           ) : (
@@ -522,6 +791,8 @@ export default function App() {
           )}
         </aside>
       </section>
+
+      <div className="workspace-height-resizer" role="separator" aria-label="作業エリアの高さを変更" aria-orientation="horizontal" title="ドラッグして作業エリアの高さを変更" onPointerDown={startWorkspaceHeightResize}><span /></div>
 
       <section className="checks panel">
         <div className="panel-heading">
