@@ -857,17 +857,29 @@ function ScaleView({ server, view, onNavigate, onUpdateServer, onUpdateMiddlewar
 
   return <section className="scale-screen panel">
     <div className="scale-heading"><div><p className="eyebrow">LEVEL 2</p><h2>{data.displayName} 詳細図</h2><p>{data.hostname || 'ホスト名未設定'} / {data.ipAddress || 'IP未設定'}</p></div><button onClick={() => onNavigate({ level: 1 })}>全体構成図へ戻る</button></div>
-    <div className="server-diagram">
+    <div className="server-diagram categorized-server-diagram">
       <section className="server-boundary">
-        <div className="server-label">OS: {`${data.osName} ${data.osVersion}`.trim() || '未設定'}</div>
-        <div className="level-two-fields"><label>ホスト名<input value={data.hostname} onChange={(event) => onUpdateServer(server.id, 'hostname', event.target.value)} /></label><label>IPアドレス<input value={data.ipAddress} onChange={(event) => onUpdateServer(server.id, 'ipAddress', event.target.value)} /></label><label>OS名<input value={data.osName} onChange={(event) => onUpdateServer(server.id, 'osName', event.target.value)} /></label><label>OSバージョン<input value={data.osVersion} onChange={(event) => onUpdateServer(server.id, 'osVersion', event.target.value)} /></label></div>
-        <div className="service-row">
-          {data.middleware.length ? data.middleware.map((item) => <div className="service-card-wrap" key={item.id}><button className="service-card" onClick={() => onNavigate({ level: 3, serverId: server.id, middlewareId: item.id })}><span>サービス</span><strong>{item.name || '名称未設定'}</strong><small>{item.port || 'ポート未設定'}</small></button><button className="remove-service" onClick={() => onDeleteMiddleware(server.id, item.id)} aria-label={`${item.name || 'ミドルウェア'}を削除`}>削除</button></div>) : <div className="service-empty">ミドルウェア未登録</div>}
-          <button className="add-service" onClick={() => onAddMiddleware(server.id)}>＋ サービスを追加</button>
+        <div className="server-shell-heading"><span>サーバー / VM</span><strong>{data.displayName}</strong><small>HW・仮想リソースを表す外枠</small></div>
+        <section className="category-section hardware-category">
+          <div className="category-heading"><div><span className="category-kicker">CATEGORY 01</span><h3>HW・リソース</h3></div><p>CPU・メモリなどの実行基盤</p></div>
+          <div className="resource-row"><label><span>CPU</span><input value={data.cpu} onChange={(event) => onUpdateServer(server.id, 'cpu', event.target.value)} /></label><label><span>メモリ</span><input value={data.memory} onChange={(event) => onUpdateServer(server.id, 'memory', event.target.value)} /></label></div>
+        </section>
+        <section className="category-section os-category">
+          <div className="category-heading"><div><span className="category-kicker">CATEGORY 02</span><h3>OS</h3></div><p>{`${data.osName} ${data.osVersion}`.trim() || '未設定'}</p></div>
+          <div className="level-two-fields"><label>ホスト名<input value={data.hostname} onChange={(event) => onUpdateServer(server.id, 'hostname', event.target.value)} /></label><label>IPアドレス<input value={data.ipAddress} onChange={(event) => onUpdateServer(server.id, 'ipAddress', event.target.value)} /></label><label>OS名<input value={data.osName} onChange={(event) => onUpdateServer(server.id, 'osName', event.target.value)} /></label><label>OSバージョン<input value={data.osVersion} onChange={(event) => onUpdateServer(server.id, 'osVersion', event.target.value)} /></label></div>
+        </section>
+        <section className="category-section middleware-category">
+          <div className="category-heading"><div><span className="category-kicker">CATEGORY 03</span><h3>MW・サービス</h3></div><p>クリックしてレベル3の詳細へ</p></div>
+          <div className="service-row">
+            {data.middleware.length ? data.middleware.map((item) => <div className="service-card-wrap" key={item.id}><button className="service-card" onClick={() => onNavigate({ level: 3, serverId: server.id, middlewareId: item.id })}><span>サービス</span><strong>{item.name || '名称未設定'}</strong><small>{item.port || 'ポート未設定'}</small></button><button className="remove-service" onClick={() => onDeleteMiddleware(server.id, item.id)} aria-label={`${item.name || 'ミドルウェア'}を削除`}>削除</button></div>) : <div className="service-empty">ミドルウェア未登録</div>}
+            <button className="add-service" onClick={() => onAddMiddleware(server.id)}>＋ サービスを追加</button>
+          </div>
+        </section>
+        <div className="category-bottom-grid">
+          <section className="category-section network-category"><div className="category-heading"><div><span className="category-kicker">CATEGORY 04</span><h3>ネットワーク</h3></div></div><div className="compact-fields"><label>インターフェース<input value="eth0" readOnly /></label><label>管理IP<input value={data.managementIpAddress} onChange={(event) => onUpdateServer(server.id, 'managementIpAddress', event.target.value)} placeholder="未設定" /></label></div></section>
+          <section className="category-section storage-category"><div className="category-heading"><div><span className="category-kicker">CATEGORY 05</span><h3>ストレージ・データ</h3></div></div><div className="compact-fields"><label>ディスク<input value={data.disk} onChange={(event) => onUpdateServer(server.id, 'disk', event.target.value)} /></label><label>用途<input value={data.purpose} onChange={(event) => onUpdateServer(server.id, 'purpose', event.target.value)} /></label></div></section>
         </div>
-        <div className="resource-row"><label><span>CPU</span><input value={data.cpu} onChange={(event) => onUpdateServer(server.id, 'cpu', event.target.value)} /></label><label><span>メモリ</span><input value={data.memory} onChange={(event) => onUpdateServer(server.id, 'memory', event.target.value)} /></label><label><span>ディスク</span><input value={data.disk} onChange={(event) => onUpdateServer(server.id, 'disk', event.target.value)} /></label></div>
       </section>
-      <div className="interface-row"><div>eth0<br /><strong>{data.ipAddress || '未設定'}</strong></div><div>OS / ネットワーク / ストレージ</div></div>
     </div>
     <button className="primary parameter-button" onClick={() => onNavigate({ level: 4, serverId: server.id })}>サーバーパラメータを表示</button>
   </section>
