@@ -22,12 +22,13 @@ import {
 } from '@xyflow/react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core'
+import type { Worksheet } from 'exceljs'
 import { faBox, faCloud, faDatabase, faHardDrive, faNetworkWired, faRoute, faServer, faShieldHalved } from '@fortawesome/free-solid-svg-icons'
 
 type DeviceKind = 'server' | 'l2-switch' | 'router' | 'firewall' | 'custom'
 type IconKey = 'server' | 'network' | 'router' | 'shield' | 'database' | 'storage' | 'cloud' | 'box'
 type EditableField = 'displayName' | 'hostname' | 'ipAddress' | 'osName' | 'osVersion' | 'cpu' | 'memory' | 'disk' | 'purpose' | 'managementIpAddress' | 'notes'
-type Middleware = { id: string; name: string; version: string; port: string; configurationNote: string }
+type Middleware = { id: string; name: string; version: string; port: string; runtime: string; framework: string; executionMethod: string; repository: string; configurationPath: string; configurationNote: string }
 type MiddlewareField = Exclude<keyof Middleware, 'id'>
 type View =
   | { level: 1 }
@@ -113,7 +114,11 @@ function iconFor(data: Pick<DeviceData, 'kind'> & Partial<Pick<DeviceData, 'icon
   return iconDefinitions[data.iconKey ?? defaultIcon[data.kind]]
 }
 
-function deviceData(kind: DeviceKind, displayName: string, values: Partial<DeviceData> = {}): DeviceData {
+function middlewareData(values: Partial<Middleware> = {}): Middleware {
+  return { id: values.id ?? crypto.randomUUID(), name: '', version: '', port: '', runtime: '', framework: '', executionMethod: '', repository: '', configurationPath: '', configurationNote: '', ...values }
+}
+
+function deviceData(kind: DeviceKind, displayName: string, values: Partial<Omit<DeviceData, 'middleware'>> & { middleware?: Partial<Middleware>[] } = {}): DeviceData {
   return {
     label: displayName,
     kind,
@@ -128,10 +133,10 @@ function deviceData(kind: DeviceKind, displayName: string, values: Partial<Devic
     purpose: '',
     managementIpAddress: '',
     notes: '',
-    middleware: [],
     iconKey: defaultIcon[kind],
     color: kindColors[kind],
     ...values,
+    middleware: (values.middleware ?? []).map((item) => middlewareData(item)),
   }
 }
 
@@ -140,21 +145,21 @@ const initialNodes: Node<DeviceData>[] = [
     id: 'web01',
     type: 'device',
     position: { x: 90, y: 120 },
-    data: deviceData('server', 'Webサーバー', { hostname: 'web01', ipAddress: '192.168.10.11', osName: 'RHEL', osVersion: '9.6', cpu: '4 vCPU', memory: '8 GB', disk: '100 GB', purpose: 'Webサーバー', middleware: [{ id: 'nginx-web01', name: 'Nginx', version: '1.24', port: '80, 443', configurationNote: 'TLS終端と静的コンテンツ配信' }, { id: 'php-fpm-web01', name: 'PHP-FPM', version: '8.3', port: '9000', configurationNote: 'Webアプリケーション実行' }] }),
+    data: deviceData('server', 'Webサーバー', { hostname: 'web01', ipAddress: '192.168.10.11', osName: 'RHEL', osVersion: '9.6', cpu: '4 vCPU', memory: '8 GB', disk: '100 GB', purpose: 'Webサーバー', middleware: [{ id: 'nginx-web01', name: 'Nginx', version: '1.24', port: '80, 443', runtime: 'Nginx 1.24', executionMethod: 'systemd', configurationPath: '/etc/nginx/nginx.conf', configurationNote: 'TLS終端と静的コンテンツ配信' }, { id: 'php-fpm-web01', name: 'PHP-FPM', version: '8.3', port: '9000', runtime: 'PHP 8.3', executionMethod: 'systemd', configurationPath: '/etc/php-fpm.d/www.conf', configurationNote: 'Webアプリケーション実行' }] }),
     style: { borderColor: kindColors.server },
   },
   {
     id: 'app01',
     type: 'device',
     position: { x: 390, y: 120 },
-    data: deviceData('server', 'APサーバー', { hostname: 'app01', ipAddress: '192.168.20.11', osName: 'RHEL', osVersion: '9.6', cpu: '4 vCPU', memory: '8 GB', disk: '100 GB', purpose: 'アプリケーションサーバー', middleware: [{ id: 'java-app01', name: 'Java Runtime', version: '21', port: '8080', configurationNote: 'アプリケーション実行環境' }] }),
+    data: deviceData('server', 'APサーバー', { hostname: 'app01', ipAddress: '192.168.20.11', osName: 'RHEL', osVersion: '9.6', cpu: '4 vCPU', memory: '8 GB', disk: '100 GB', purpose: 'アプリケーションサーバー', middleware: [{ id: 'java-app01', name: 'Java Runtime', version: '21', port: '8080', runtime: 'Java 21', executionMethod: 'systemd', configurationNote: 'アプリケーション実行環境' }] }),
     style: { borderColor: kindColors.server },
   },
   {
     id: 'db01',
     type: 'device',
     position: { x: 690, y: 120 },
-    data: deviceData('server', 'DBサーバー', { hostname: 'db01', ipAddress: '192.168.30.11', osName: 'RHEL', osVersion: '9.6', cpu: '8 vCPU', memory: '16 GB', disk: '200 GB', purpose: 'データベースサーバー', middleware: [{ id: 'postgres-db01', name: 'PostgreSQL', version: '16', port: '5432', configurationNote: '業務データベース' }] }),
+    data: deviceData('server', 'DBサーバー', { hostname: 'db01', ipAddress: '192.168.30.11', osName: 'RHEL', osVersion: '9.6', cpu: '8 vCPU', memory: '16 GB', disk: '200 GB', purpose: 'データベースサーバー', middleware: [{ id: 'postgres-db01', name: 'PostgreSQL', version: '16', port: '5432', runtime: 'PostgreSQL 16', executionMethod: 'systemd', configurationPath: '/var/lib/pgsql/data/postgresql.conf', configurationNote: '業務データベース' }] }),
     style: { borderColor: kindColors.server },
   },
   {
@@ -239,6 +244,83 @@ function download(filename: string, content: string, type: string) {
 
 function csvValue(value: string) {
   return `"${value.replaceAll('"', '""')}"`
+}
+
+function downloadBlob(filename: string, blob: Blob) {
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  anchor.click()
+  URL.revokeObjectURL(url)
+}
+
+function escapeXml(value: string) {
+  return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&apos;')
+}
+
+async function svgToPng(svg: string, width: number, height: number) {
+  const imageUrl = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }))
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const element = new Image()
+      element.onload = () => resolve(element)
+      element.onerror = () => reject(new Error('構成図イメージを生成できませんでした。'))
+      element.src = imageUrl
+    })
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('画像用キャンバスを作成できませんでした。')
+    context.fillStyle = '#ffffff'
+    context.fillRect(0, 0, width, height)
+    context.drawImage(image, 0, 0, width, height)
+    return canvas.toDataURL('image/png')
+  } finally {
+    URL.revokeObjectURL(imageUrl)
+  }
+}
+
+function levelOneDiagramSvg(nodes: Node<DeviceData>[], edges: Edge<ConnectionData>[]) {
+  const nodeWidth = 160
+  const nodeHeight = 68
+  const minX = Math.min(...nodes.map((node) => node.position.x), 0)
+  const minY = Math.min(...nodes.map((node) => node.position.y), 0)
+  const maxX = Math.max(...nodes.map((node) => node.position.x + nodeWidth), 760)
+  const maxY = Math.max(...nodes.map((node) => node.position.y + nodeHeight), 420)
+  const width = Math.min(1100, Math.max(820, maxX - minX + 120))
+  const height = Math.min(720, Math.max(460, maxY - minY + 140))
+  const position = (node: Node<DeviceData>) => ({ x: node.position.x - minX + 60, y: node.position.y - minY + 60 })
+  const edgeMarkup = edges.map((edge) => {
+    const source = nodes.find((node) => node.id === edge.source)
+    const target = nodes.find((node) => node.id === edge.target)
+    if (!source || !target) return ''
+    const from = position(source)
+    const to = position(target)
+    return `<path d="M ${from.x + nodeWidth / 2} ${from.y + nodeHeight / 2} L ${to.x + nodeWidth / 2} ${to.y + nodeHeight / 2}" fill="none" stroke="#94a3b8" stroke-width="2.5"/>`
+  }).join('')
+  const nodeMarkup = nodes.map((node) => {
+    const { x, y } = position(node)
+    const color = node.data.color || kindColors[node.data.kind]
+    return `<g><rect x="${x}" y="${y}" width="${nodeWidth}" height="${nodeHeight}" rx="10" fill="#ffffff" stroke="${color}" stroke-width="3"/><text x="${x + 16}" y="${y + 27}" fill="#64748b" font-family="Arial, sans-serif" font-size="12" font-weight="700">${escapeXml(kindLabels[node.data.kind])}</text><text x="${x + 16}" y="${y + 49}" fill="#1e293b" font-family="Arial, sans-serif" font-size="16" font-weight="700">${escapeXml(node.data.displayName)}</text></g>`
+  }).join('')
+  return { width, height, svg: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="#f8fbff"/><text x="28" y="32" fill="#1e3a5f" font-family="Arial, sans-serif" font-size="18" font-weight="700">レベル1 全体構成図</text>${edgeMarkup}${nodeMarkup}</svg>` }
+}
+
+function levelTwoDiagramSvg(server: Node<DeviceData>) {
+  const { data } = server
+  const width = 860
+  const serviceRows = Math.max(1, Math.ceil(data.middleware.length / 3))
+  const height = 410 + serviceRows * 92
+  const services = data.middleware.length ? data.middleware.map((item, index) => {
+    const x = 55 + (index % 3) * 250
+    const y = 230 + Math.floor(index / 3) * 84
+    return `<g><rect x="${x}" y="${y}" width="215" height="58" rx="7" fill="#ffffff" stroke="#9a7ad4" stroke-width="2"/><text x="${x + 12}" y="${y + 25}" fill="#4c317f" font-family="Arial, sans-serif" font-size="14" font-weight="700">${escapeXml(item.name || '名称未設定')}</text><text x="${x + 12}" y="${y + 45}" fill="#6b7280" font-family="Arial, sans-serif" font-size="11">${escapeXml(item.runtime || item.port || 'ランタイム未設定')}</text></g>`
+  }).join('') : '<text x="55" y="265" fill="#6b7280" font-family="Arial, sans-serif" font-size="14">ミドルウェア未登録</text>'
+  const lowerY = 230 + serviceRows * 84 + 18
+  const title = escapeXml(data.displayName)
+  return { width, height, svg: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="#f8fbff"/><rect x="20" y="18" width="820" height="${height - 36}" rx="12" fill="#ffffff" stroke="#86a9d7" stroke-width="3"/><rect x="40" y="38" width="780" height="42" rx="7" fill="#e2eefc" stroke="#7d9fc8"/><text x="56" y="64" fill="#214f83" font-family="Arial, sans-serif" font-size="17" font-weight="700">サーバー / VM　${title}</text><rect x="40" y="98" width="370" height="105" rx="8" fill="#f8fbff" stroke="#b8cde5"/><text x="56" y="124" fill="#274766" font-family="Arial, sans-serif" font-size="15" font-weight="700">HW・リソース</text><text x="56" y="154" fill="#334155" font-family="Arial, sans-serif" font-size="13">CPU: ${escapeXml(data.cpu || '未設定')}</text><text x="56" y="180" fill="#334155" font-family="Arial, sans-serif" font-size="13">メモリ: ${escapeXml(data.memory || '未設定')}</text><rect x="430" y="98" width="390" height="105" rx="8" fill="#f7fcf8" stroke="#a8d0b6"/><text x="446" y="124" fill="#274766" font-family="Arial, sans-serif" font-size="15" font-weight="700">OS</text><text x="446" y="154" fill="#334155" font-family="Arial, sans-serif" font-size="13">${escapeXml(`${data.osName} ${data.osVersion}`.trim() || '未設定')}</text><text x="446" y="180" fill="#334155" font-family="Arial, sans-serif" font-size="13">${escapeXml(data.hostname || 'ホスト名未設定')} / ${escapeXml(data.ipAddress || 'IP未設定')}</text><rect x="40" y="218" width="780" height="${serviceRows * 84 + 36}" rx="8" fill="#fbf9ff" stroke="#d5c5ef"/><text x="56" y="244" fill="#4c317f" font-family="Arial, sans-serif" font-size="15" font-weight="700">MW・アプリケーション</text>${services}<rect x="40" y="${lowerY}" width="370" height="78" rx="8" fill="#f7fcff" stroke="#b6d6e9"/><text x="56" y="${lowerY + 27}" fill="#274766" font-family="Arial, sans-serif" font-size="15" font-weight="700">ネットワーク</text><text x="56" y="${lowerY + 52}" fill="#334155" font-family="Arial, sans-serif" font-size="13">eth0 / 管理IP: ${escapeXml(data.managementIpAddress || '未設定')}</text><rect x="430" y="${lowerY}" width="390" height="78" rx="8" fill="#fffdf7" stroke="#e4d09e"/><text x="446" y="${lowerY + 27}" fill="#274766" font-family="Arial, sans-serif" font-size="15" font-weight="700">ストレージ・データ</text><text x="446" y="${lowerY + 52}" fill="#334155" font-family="Arial, sans-serif" font-size="13">ディスク: ${escapeXml(data.disk || '未設定')}</text></svg>` }
 }
 
 function normalizeNodes(nodes: Node<DeviceData>[]) {
@@ -443,7 +525,7 @@ export default function App() {
   const addMiddleware = (serverId: string) => {
     setNodes((current) => current.map((node) => node.id === serverId ? {
       ...node,
-      data: { ...node.data, middleware: [...node.data.middleware, { id: crypto.randomUUID(), name: '', version: '', port: '', configurationNote: '' }] },
+      data: { ...node.data, middleware: [...node.data.middleware, middlewareData()] },
     } : node))
   }
 
@@ -663,6 +745,81 @@ export default function App() {
     download('ip-address-list.csv', `\uFEFF${ipCsv}`, 'text/csv;charset=utf-8')
   }
 
+  const exportExcel = async () => {
+    setSaveMessage('レイアウト付きExcelファイルを作成しています。')
+    try {
+      const ExcelJS = await import('exceljs')
+      const servers = nodes.filter((node) => node.data.kind === 'server')
+      const workbook = new ExcelJS.Workbook()
+      const tableHeader = { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: '1F4E78' } }
+      const sectionFill = { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'DCEAF7' } }
+      const setupSheet = (sheet: Worksheet, title: string, widths: number[]) => {
+        sheet.views = [{ showGridLines: false }]
+        sheet.columns = widths.map((width) => ({ width }))
+        sheet.getCell('A1').value = title
+        sheet.getCell('A1').font = { name: 'Arial', size: 15, bold: true, color: { argb: '1F3B5D' } }
+        sheet.getCell('A2').value = `システム名: ${projectName}`
+        sheet.getCell('A2').font = { name: 'Arial', size: 10, italic: true, color: { argb: '5E7188' } }
+      }
+      const addTable = (sheet: Worksheet, startRow: number, label: string, headers: string[], rows: Array<Array<string | number>>) => {
+        const labelRow = sheet.getRow(startRow)
+        labelRow.getCell(1).value = label
+        labelRow.font = { name: 'Arial', size: 11, bold: true, color: { argb: '1F3B5D' } }
+        labelRow.fill = sectionFill
+        const headerRow = sheet.getRow(startRow + 1)
+        headerRow.values = headers
+        headerRow.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFF' } }
+        headerRow.fill = tableHeader
+        headerRow.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }
+        rows.forEach((row, index) => {
+          const dataRow = sheet.getRow(startRow + 2 + index)
+          dataRow.values = row
+          dataRow.font = { name: 'Arial', size: 10, color: { argb: '24364A' } }
+          dataRow.alignment = { vertical: 'middle', wrapText: true }
+        })
+        return startRow + 2 + Math.max(rows.length, 1)
+      }
+
+      const level1 = workbook.addWorksheet('レベル1_全体構成')
+      setupSheet(level1, 'レベル1 全体構成図', [18, 16, 20, 18, 18, 18, 22, 32])
+      const level1Image = levelOneDiagramSvg(nodes, edges)
+      const level1ImageId = workbook.addImage({ base64: await svgToPng(level1Image.svg, level1Image.width, level1Image.height), extension: 'png' })
+      level1.addImage(level1ImageId, { tl: { col: 1, row: 2 }, ext: { width: 760, height: Math.round(760 * level1Image.height / level1Image.width) } })
+      let level1Row = 4 + Math.ceil((760 * level1Image.height / level1Image.width) / 20)
+      level1Row = addTable(level1, level1Row, '部品一覧', ['部品ID', '種別', '表示名', 'ホスト名', 'IPアドレス', '管理IPアドレス', '用途', '備考'], nodes.map((node) => [node.id, kindLabels[node.data.kind], node.data.displayName, node.data.hostname, node.data.ipAddress, node.data.managementIpAddress, node.data.purpose, node.data.notes])) + 2
+      addTable(level1, level1Row, '接続一覧', ['接続ID', '接続元', '接続先', '接続種別', '接続元IF', '接続先IF', '備考'], edges.map((edge) => [edge.id, nodes.find((node) => node.id === edge.source)?.data.displayName ?? edge.source, nodes.find((node) => node.id === edge.target)?.data.displayName ?? edge.target, edge.data?.connectionType ?? 'network', edge.data?.sourceInterface ?? '', edge.data?.targetInterface ?? '', edge.data?.notes ?? '']))
+
+      const level2 = workbook.addWorksheet('レベル2_サーバー詳細')
+      setupSheet(level2, 'レベル2 サーバー詳細図', [20, 18, 18, 18, 16, 16, 18, 18, 22, 22, 32])
+      let level2Row = 3
+      for (const server of servers) {
+        const image = levelTwoDiagramSvg(server)
+        const imageId = workbook.addImage({ base64: await svgToPng(image.svg, image.width, image.height), extension: 'png' })
+        level2.addImage(imageId, { tl: { col: 1, row: level2Row }, ext: { width: 760, height: Math.round(760 * image.height / image.width) } })
+        level2Row += Math.ceil((760 * image.height / image.width) / 20) + 3
+      }
+      addTable(level2, level2Row, 'サーバー詳細一覧', ['サーバー名', 'ホスト名', 'HW・リソース: CPU', 'HW・リソース: メモリ', 'OS名', 'OSバージョン', 'IPアドレス', '管理IPアドレス', 'ストレージ: ディスク', '用途', '備考'], servers.map((node) => [node.data.displayName, node.data.hostname, node.data.cpu, node.data.memory, node.data.osName, node.data.osVersion, node.data.ipAddress, node.data.managementIpAddress, node.data.disk, node.data.purpose, node.data.notes]))
+
+      const level3 = workbook.addWorksheet('レベル3_MWサービス')
+      setupSheet(level3, 'レベル3 MW・サービス詳細', [20, 18, 22, 22, 20, 18, 16, 16, 32, 32, 40])
+      addTable(level3, 4, 'MW・サービス一覧', ['サーバー名', 'ホスト名', 'サービス名', '実行言語・ランタイム', 'フレームワーク', '実行方式', 'バージョン', 'ポート', 'リポジトリ／イメージ', '設定ファイル', '設定メモ'], servers.flatMap((node) => node.data.middleware.map((middleware) => [node.data.displayName, node.data.hostname, middleware.name, middleware.runtime, middleware.framework, middleware.executionMethod, middleware.version, middleware.port, middleware.repository, middleware.configurationPath, middleware.configurationNote])))
+
+      const level4 = workbook.addWorksheet('レベル4_設定パラメータ')
+      setupSheet(level4, 'レベル4 設定・パラメータ', [16, 20, 22, 20, 20, 42])
+      addTable(level4, 4, '設定・パラメータ一覧', ['対象区分', 'サーバー名', 'サービス名', 'カテゴリ', 'パラメータ', '値'], servers.flatMap((node) => [
+        ['サーバー', node.data.displayName, '', 'HW・リソース', 'CPU', node.data.cpu], ['サーバー', node.data.displayName, '', 'HW・リソース', 'メモリ', node.data.memory], ['サーバー', node.data.displayName, '', 'ストレージ・データ', 'ディスク', node.data.disk], ['サーバー', node.data.displayName, '', 'OS', 'ホスト名', node.data.hostname], ['サーバー', node.data.displayName, '', 'OS', 'OS名', node.data.osName], ['サーバー', node.data.displayName, '', 'OS', 'OSバージョン', node.data.osVersion], ['サーバー', node.data.displayName, '', 'ネットワーク', 'IPアドレス', node.data.ipAddress], ['サーバー', node.data.displayName, '', 'ネットワーク', '管理IPアドレス', node.data.managementIpAddress], ['サーバー', node.data.displayName, '', '共通', '用途', node.data.purpose], ['サーバー', node.data.displayName, '', '共通', '備考', node.data.notes],
+        ...node.data.middleware.flatMap((middleware) => [['MW・サービス', node.data.displayName, middleware.name, 'アプリケーション・ランタイム', '実行言語・ランタイム', middleware.runtime], ['MW・サービス', node.data.displayName, middleware.name, 'アプリケーション・ランタイム', 'フレームワーク', middleware.framework], ['MW・サービス', node.data.displayName, middleware.name, 'アプリケーション・ランタイム', '実行方式', middleware.executionMethod], ['MW・サービス', node.data.displayName, middleware.name, 'アプリケーション・ランタイム', 'リポジトリ／イメージ', middleware.repository], ['MW・サービス', node.data.displayName, middleware.name, 'アプリケーション・ランタイム', '設定ファイル', middleware.configurationPath], ['MW・サービス', node.data.displayName, middleware.name, 'MW・サービス', 'バージョン', middleware.version], ['MW・サービス', node.data.displayName, middleware.name, 'MW・サービス', 'ポート', middleware.port], ['MW・サービス', node.data.displayName, middleware.name, 'MW・サービス', '設定メモ', middleware.configurationNote]]),
+      ]))
+
+      const filename = `${projectName.trim().replace(/[\\/:*?"<>|]/g, '_') || 'server-design'}_設計情報.xlsx`
+      downloadBlob(filename, new Blob([await workbook.xlsx.writeBuffer()], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }))
+      setSaveMessage('レイアウト画像とレベル1〜4の表を含むExcelファイルを書き出しました。')
+    } catch (error) {
+      console.error(error)
+      setSaveMessage('Excelの書き出しに失敗しました。入力内容を確認してもう一度お試しください。')
+    }
+  }
+
   const connectionLabel = (edge: Edge<ConnectionData>) => `${nodes.find((node) => node.id === edge.source)?.data.displayName ?? edge.source} → ${nodes.find((node) => node.id === edge.target)?.data.displayName ?? edge.target}`
 
   return (
@@ -692,6 +849,7 @@ export default function App() {
             <button role="menuitem" onClick={runMenuAction(() => fileInput.current?.click())}>JSONを開く</button>
             <button role="menuitem" onClick={runMenuAction(saveProject)}>JSONを書き出し</button>
             <button role="menuitem" onClick={runMenuAction(exportCsv)}>CSVを出力</button>
+            <button role="menuitem" onClick={runMenuAction(exportExcel)}>Excelを出力</button>
           </div>}
         </div>
         <div className="menu-group">
@@ -834,7 +992,7 @@ function ScaleView({ server, view, onNavigate, onUpdateServer, onUpdateMiddlewar
 
   if (view.level === 4) {
     const serverFields: Array<[EditableField, string]> = [['displayName', '表示名'], ['hostname', 'ホスト名'], ['ipAddress', 'IPアドレス'], ['osName', 'OS名'], ['osVersion', 'OSバージョン'], ['cpu', 'CPU'], ['memory', 'メモリ'], ['disk', 'ディスク'], ['purpose', '用途'], ['notes', '備考']]
-    const middlewareFields: Array<[MiddlewareField, string]> = [['name', 'サービス'], ['version', 'バージョン'], ['port', 'ポート'], ['configurationNote', '設定メモ']]
+    const middlewareFields: Array<[MiddlewareField, string]> = [['name', 'サービス'], ['runtime', '実行言語・ランタイム'], ['framework', 'フレームワーク'], ['executionMethod', '実行方式'], ['repository', 'リポジトリ／イメージ'], ['configurationPath', '設定ファイル'], ['version', 'バージョン'], ['port', 'ポート'], ['configurationNote', '設定メモ']]
     return <section className="scale-screen panel">
       <div className="scale-heading"><div><p className="eyebrow">LEVEL 4</p><h2>設定・パラメータ</h2><p>{selectedMiddleware ? `${selectedMiddleware.name} の設定値` : `${data.displayName} の基本パラメータ`}</p></div><button onClick={() => onNavigate({ level: 2, serverId: server.id })}>詳細図へ戻る</button></div>
       <p className="edit-hint">ここで編集した値は、全体構成図・詳細図・一覧・出力へ同時に反映されます。</p>
@@ -847,8 +1005,13 @@ function ScaleView({ server, view, onNavigate, onUpdateServer, onUpdateMiddlewar
       <div className="scale-heading"><div><p className="eyebrow">LEVEL 3</p><h2>{selectedMiddleware.name} サービス詳細</h2><p>{data.displayName} / {data.hostname}</p></div><button onClick={() => onNavigate({ level: 2, serverId: server.id })}>サーバー詳細図へ戻る</button></div>
       <div className="service-detail-grid">
         <label>サービス名<input value={selectedMiddleware.name} onChange={(event) => onUpdateMiddleware(server.id, selectedMiddleware.id, 'name', event.target.value)} /></label>
+        <label>実行言語・ランタイム<input value={selectedMiddleware.runtime} onChange={(event) => onUpdateMiddleware(server.id, selectedMiddleware.id, 'runtime', event.target.value)} placeholder="例: Java 21 / Node.js 22" /></label>
+        <label>フレームワーク<input value={selectedMiddleware.framework} onChange={(event) => onUpdateMiddleware(server.id, selectedMiddleware.id, 'framework', event.target.value)} placeholder="例: Spring Boot" /></label>
+        <label>実行方式<input value={selectedMiddleware.executionMethod} onChange={(event) => onUpdateMiddleware(server.id, selectedMiddleware.id, 'executionMethod', event.target.value)} placeholder="例: Docker / systemd" /></label>
         <label>バージョン<input value={selectedMiddleware.version} onChange={(event) => onUpdateMiddleware(server.id, selectedMiddleware.id, 'version', event.target.value)} /></label>
         <label>利用ポート<input value={selectedMiddleware.port} onChange={(event) => onUpdateMiddleware(server.id, selectedMiddleware.id, 'port', event.target.value)} /></label>
+        <label>リポジトリ／イメージ<input value={selectedMiddleware.repository} onChange={(event) => onUpdateMiddleware(server.id, selectedMiddleware.id, 'repository', event.target.value)} placeholder="例: org/service または registry/image" /></label>
+        <label>設定ファイル<input value={selectedMiddleware.configurationPath} onChange={(event) => onUpdateMiddleware(server.id, selectedMiddleware.id, 'configurationPath', event.target.value)} placeholder="例: /etc/service/config.yml" /></label>
         <label>設定メモ<textarea value={selectedMiddleware.configurationNote} onChange={(event) => onUpdateMiddleware(server.id, selectedMiddleware.id, 'configurationNote', event.target.value)} rows={3} /></label>
       </div>
       <button className="primary parameter-button" onClick={() => onNavigate({ level: 4, serverId: server.id, middlewareId: selectedMiddleware.id })}>パラメータを表示</button>
@@ -869,9 +1032,9 @@ function ScaleView({ server, view, onNavigate, onUpdateServer, onUpdateMiddlewar
           <div className="level-two-fields"><label>ホスト名<input value={data.hostname} onChange={(event) => onUpdateServer(server.id, 'hostname', event.target.value)} /></label><label>IPアドレス<input value={data.ipAddress} onChange={(event) => onUpdateServer(server.id, 'ipAddress', event.target.value)} /></label><label>OS名<input value={data.osName} onChange={(event) => onUpdateServer(server.id, 'osName', event.target.value)} /></label><label>OSバージョン<input value={data.osVersion} onChange={(event) => onUpdateServer(server.id, 'osVersion', event.target.value)} /></label></div>
         </section>
         <section className="category-section middleware-category">
-          <div className="category-heading"><div><span className="category-kicker">CATEGORY 03</span><h3>MW・サービス</h3></div><p>クリックしてレベル3の詳細へ</p></div>
+          <div className="category-heading"><div><span className="category-kicker">CATEGORY 03</span><h3>MW・アプリケーション</h3></div><p>クリックしてレベル3の詳細へ</p></div>
           <div className="service-row">
-            {data.middleware.length ? data.middleware.map((item) => <div className="service-card-wrap" key={item.id}><button className="service-card" onClick={() => onNavigate({ level: 3, serverId: server.id, middlewareId: item.id })}><span>サービス</span><strong>{item.name || '名称未設定'}</strong><small>{item.port || 'ポート未設定'}</small></button><button className="remove-service" onClick={() => onDeleteMiddleware(server.id, item.id)} aria-label={`${item.name || 'ミドルウェア'}を削除`}>削除</button></div>) : <div className="service-empty">ミドルウェア未登録</div>}
+            {data.middleware.length ? data.middleware.map((item) => <div className="service-card-wrap" key={item.id}><button className="service-card" onClick={() => onNavigate({ level: 3, serverId: server.id, middlewareId: item.id })}><span>MW・アプリケーション</span><strong>{item.name || '名称未設定'}</strong><small>{item.runtime || 'ランタイム未設定'}</small><small>{[item.framework, item.executionMethod, item.port].filter(Boolean).join(' / ') || '詳細未設定'}</small></button><button className="remove-service" onClick={() => onDeleteMiddleware(server.id, item.id)} aria-label={`${item.name || 'ミドルウェア'}を削除`}>削除</button></div>) : <div className="service-empty">MW・アプリケーション未登録</div>}
             <button className="add-service" onClick={() => onAddMiddleware(server.id)}>＋ サービスを追加</button>
           </div>
         </section>

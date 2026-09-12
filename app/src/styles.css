@@ -98,7 +98,7 @@ button.primary:hover { background: #1e40af; }
 .level-two-fields label, .resource-row label, .service-detail-grid label { display: grid; gap: .3rem; color: #536c86; font-size: .74rem; font-weight: 750; }
 .level-two-fields input, .resource-row input, .service-detail-grid input, .service-detail-grid textarea, .parameter-table input, .parameter-table textarea { width: 100%; border: 1px solid #c6d5e5; border-radius: .35rem; padding: .42rem .48rem; color: #1b2c45; background: #fff; font-size: .85rem; font-weight: 500; }
 .service-row { display: flex; justify-content: center; flex-wrap: wrap; gap: 1rem; min-height: 8rem; padding: 1.3rem 1rem; }
-.service-card-wrap { position: relative; }.service-card { width: 10rem; display: grid; gap: .3rem; justify-items: center; border: 1px solid #76a6c2; background: #fff; color: #174866; padding: .85rem; }
+.service-card-wrap { position: relative; }.service-card { width: 13rem; min-height: 7.2rem; display: grid; gap: .3rem; justify-items: center; border: 1px solid #76a6c2; background: #fff; color: #174866; padding: .85rem; }
 .remove-service { width: 100%; margin-top: .3rem; padding: .25rem; border-color: #fecaca; color: #b91c1c; font-size: .72rem; }.add-service { align-self: center; border-style: dashed; border-color: #7da4d1; color: #1d4ed8; }
 .service-card span, .resource-row span, .service-detail-grid span { color: #66829c; font-size: .72rem; font-weight: 750; }
 .service-card small { color: #4d6782; }
