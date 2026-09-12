@@ -1,11 +1,10 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
 import {
   addEdge,
   Background,
   BaseEdge,
   Controls,
-  EdgeLabelRenderer,
   getSmoothStepPath,
   Handle,
   MiniMap,
@@ -18,14 +17,13 @@ import {
   type NodeProps,
   useEdgesState,
   useNodesState,
-  useReactFlow,
 } from '@xyflow/react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core'
 import type { Worksheet } from 'exceljs'
 import { faBox, faCloud, faDatabase, faHardDrive, faNetworkWired, faRoute, faServer, faShieldHalved } from '@fortawesome/free-solid-svg-icons'
 
-type DeviceKind = 'server' | 'l2-switch' | 'router' | 'firewall' | 'custom'
+type DeviceKind = 'server' | 'network' | 'l2-switch' | 'router' | 'firewall' | 'database' | 'storage' | 'cloud' | 'custom'
 type IconKey = 'server' | 'network' | 'router' | 'shield' | 'database' | 'storage' | 'cloud' | 'box'
 type EditableField = 'displayName' | 'hostname' | 'ipAddress' | 'osName' | 'osVersion' | 'cpu' | 'memory' | 'disk' | 'purpose' | 'managementIpAddress' | 'notes' | 'deploymentType' | 'platformProvider' | 'platformLocation' | 'platformResource' | 'platformDetail'
 type Middleware = { id: string; name: string; version: string; port: string; runtime: string; framework: string; executionMethod: string; repository: string; configurationPath: string; configurationNote: string }
@@ -71,9 +69,19 @@ type SystemPolicy = {
 
 type Selection = { type: 'node'; id: string } | { type: 'edge'; id: string } | null
 type Validation = { severity: 'warning' | 'info'; message: string; nodeIds: string[] }
-type ConnectionData = { connectionType: string; sourceInterface: string; targetInterface: string; notes: string; waypoint?: { x: number; y: number } }
-type ConnectionField = Exclude<keyof ConnectionData, 'waypoint'>
+type ConnectionData = { connectionType: string; sourceInterface: string; targetInterface: string; notes: string; waypoint?: { x: number; y: number }; manualHandles?: boolean }
+type ConnectionField = Exclude<keyof ConnectionData, 'waypoint' | 'manualHandles'>
 type StoredProject = { schemaVersion: '1.3'; id: string; name: string; systemPolicy: SystemPolicy; nodes: Node<DeviceData>[]; edges: Edge<ConnectionData>[]; updatedAt: string }
+type HistorySnapshot = { projectId: string; projectName: string; systemPolicy: SystemPolicy; nodes: Node<DeviceData>[]; edges: Edge<ConnectionData>[] }
+type HistoryState = { undo: HistorySnapshot[]; redo: HistorySnapshot[]; current: HistorySnapshot }
+
+function historyNodes(nodes: Node<DeviceData>[]) {
+  return nodes.map(({ selected: _selected, dragging: _dragging, measured: _measured, className: _className, ...node }) => structuredClone(node)) as Node<DeviceData>[]
+}
+
+function historyEdges(edges: Edge<ConnectionData>[]) {
+  return edges.map(({ selected: _selected, ...edge }) => structuredClone(edge)) as Edge<ConnectionData>[]
+}
 
 const browserStorageKey = 'server-design-gui.projects.v1'
 const emptySystemPolicy = (): SystemPolicy => ({ architecturePolicy: '', sharedNetwork: '', governance: '', availabilityPolicy: '', boundaryPolicy: '', notes: '' })
@@ -102,21 +110,28 @@ function deploymentProfile(type: string) {
     default: return { provider: 'クラウド／仮想化基盤', location: 'リージョン・拠点', resource: 'リソース・クラスタ', detail: '補足情報', examples: ['例: AWS / VMware vSphere', '例: ap-northeast-1 / 東京DC', '例: EC2 i-xxxx / EKS cluster', '例: 任意の補足情報'] }
   }
 }
-const EdgeActionsContext = createContext<{ updateWaypoint: (edgeId: string, position: { x: number; y: number }) => void } | null>(null)
 
 const kindLabels: Record<DeviceKind, string> = {
   server: 'サーバー',
+  network: 'ネットワーク',
   'l2-switch': 'L2スイッチ',
   router: 'ルーター',
   firewall: 'ファイアウォール',
+  database: 'データベース',
+  storage: 'ストレージ',
+  cloud: 'クラウドサービス',
   custom: 'カスタム部品',
 }
 
 const kindColors: Record<DeviceKind, string> = {
   server: '#2563eb',
+  network: '#0891b2',
   'l2-switch': '#0f766e',
   router: '#7c3aed',
   firewall: '#dc2626',
+  database: '#7c3aed',
+  storage: '#b45309',
+  cloud: '#0284c7',
   custom: '#475569',
 }
 
@@ -144,9 +159,13 @@ const iconLabels: Record<IconKey, string> = {
 
 const defaultIcon: Record<DeviceKind, IconKey> = {
   server: 'server',
+  network: 'network',
   'l2-switch': 'network',
   router: 'router',
   firewall: 'shield',
+  database: 'database',
+  storage: 'storage',
+  cloud: 'cloud',
   custom: 'box',
 }
 
@@ -236,43 +255,24 @@ function DeviceNode({ data }: NodeProps) {
   const device = data as DeviceData
   const color = device.color ?? kindColors[device.kind]
   return <div className="device-node" style={{ borderColor: color }}>
-    <Handle id="target-top" className="connection-handle target-handle" type="target" position={Position.Top} style={{ left: '35%' }} aria-label="上側の接続先" />
-    <Handle id="source-top" className="connection-handle source-handle" type="source" position={Position.Top} style={{ left: '65%' }} aria-label="上側の接続元" />
-    <Handle id="target-left" className="connection-handle target-handle" type="target" position={Position.Left} style={{ top: '35%' }} aria-label="左側の接続先" />
-    <Handle id="source-left" className="connection-handle source-handle" type="source" position={Position.Left} style={{ top: '65%' }} aria-label="左側の接続元" />
+    <Handle id="target-top" className="connection-handle target-handle" type="target" position={Position.Top} style={{ left: '46%' }} aria-label="上側の接続先" />
+    <Handle id="source-top" className="connection-handle source-handle" type="source" position={Position.Top} style={{ left: '54%' }} aria-label="上側の接続元" />
+    <Handle id="target-left" className="connection-handle target-handle" type="target" position={Position.Left} style={{ top: '46%' }} aria-label="左側の接続先" />
+    <Handle id="source-left" className="connection-handle source-handle" type="source" position={Position.Left} style={{ top: '54%' }} aria-label="左側の接続元" />
     <FontAwesomeIcon className="node-icon" icon={iconFor(device)} style={{ color }} />
     <div><small>{kindLabels[device.kind]}</small><strong>{device.displayName}</strong></div>
-    <Handle id="target-right" className="connection-handle target-handle" type="target" position={Position.Right} style={{ top: '35%' }} aria-label="右側の接続先" />
-    <Handle id="source-right" className="connection-handle source-handle" type="source" position={Position.Right} style={{ top: '65%' }} aria-label="右側の接続元" />
-    <Handle id="target-bottom" className="connection-handle target-handle" type="target" position={Position.Bottom} style={{ left: '35%' }} aria-label="下側の接続先" />
-    <Handle id="source-bottom" className="connection-handle source-handle" type="source" position={Position.Bottom} style={{ left: '65%' }} aria-label="下側の接続元" />
+    <Handle id="target-right" className="connection-handle target-handle" type="target" position={Position.Right} style={{ top: '46%' }} aria-label="右側の接続先" />
+    <Handle id="source-right" className="connection-handle source-handle" type="source" position={Position.Right} style={{ top: '54%' }} aria-label="右側の接続元" />
+    <Handle id="target-bottom" className="connection-handle target-handle" type="target" position={Position.Bottom} style={{ left: '46%' }} aria-label="下側の接続先" />
+    <Handle id="source-bottom" className="connection-handle source-handle" type="source" position={Position.Bottom} style={{ left: '54%' }} aria-label="下側の接続元" />
   </div>
 }
 
 const nodeTypes = { device: DeviceNode }
 
 function EditableEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, selected, style }: EdgeProps<Edge<ConnectionData>>) {
-  const actions = useContext(EdgeActionsContext)
-  const { screenToFlowPosition } = useReactFlow()
-  const [smoothPath, defaultLabelX, defaultLabelY] = getSmoothStepPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition })
-  const waypoint = data?.waypoint
-  const edgePath = waypoint ? `M ${sourceX},${sourceY} L ${waypoint.x},${waypoint.y} L ${targetX},${targetY}` : smoothPath
-  const labelX = waypoint?.x ?? defaultLabelX
-  const labelY = waypoint?.y ?? defaultLabelY
-
-  const startWaypointDrag = (event: React.PointerEvent<HTMLDivElement>) => {
-    event.preventDefault()
-    event.stopPropagation()
-    const update = (pointerEvent: PointerEvent) => actions?.updateWaypoint(id, screenToFlowPosition({ x: pointerEvent.clientX, y: pointerEvent.clientY }))
-    const finish = () => {
-      window.removeEventListener('pointermove', update)
-      window.removeEventListener('pointerup', finish)
-    }
-    window.addEventListener('pointermove', update)
-    window.addEventListener('pointerup', finish)
-  }
-
-  return <><BaseEdge id={id} path={edgePath} style={style} interactionWidth={20} /><EdgeLabelRenderer><div className={selected ? 'edge-waypoint visible nopan nodrag' : 'edge-waypoint nopan nodrag'} style={{ transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)` }} onPointerDown={startWaypointDrag} title="ドラッグして線の経由点を移動" /></EdgeLabelRenderer></>
+  const [edgePath] = getSmoothStepPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition })
+  return <BaseEdge id={id} path={edgePath} style={style} interactionWidth={20} />
 }
 
 const edgeTypes = { editable: EditableEdge }
@@ -397,23 +397,25 @@ export default function App() {
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge<ConnectionData>>(initialEdges)
   const [selection, setSelection] = useState<Selection>(null)
   const [view, setView] = useState<View>({ level: 1 })
-  const [showCustomCreator, setShowCustomCreator] = useState(false)
-  const [customName, setCustomName] = useState('')
-  const [customIcon, setCustomIcon] = useState<IconKey>('box')
-  const [customColor, setCustomColor] = useState('#475569')
+  const [showLayoutEditor, setShowLayoutEditor] = useState(false)
   const [isConnectionMode, setIsConnectionMode] = useState(false)
   const [connectionNodeIds, setConnectionNodeIds] = useState<string[]>([])
   const [projectId, setProjectId] = useState<string>(() => crypto.randomUUID())
   const [projectName, setProjectName] = useState('新しいシステム')
   const [systemPolicy, setSystemPolicy] = useState<SystemPolicy>(() => emptySystemPolicy())
+  const [historyRevision, setHistoryRevision] = useState(0)
   const [savedProjects, setSavedProjects] = useState<StoredProject[]>(readBrowserProjects)
   const [showProjectLibrary, setShowProjectLibrary] = useState(false)
   const [saveMessage, setSaveMessage] = useState('')
-  const [openMenu, setOpenMenu] = useState<'file' | 'edit' | 'view' | null>(null)
+  const [openMenu, setOpenMenu] = useState<'file' | 'edit' | 'view' | 'layout' | null>(null)
   const [panelWidths, setPanelWidths] = useState({ palette: 200, properties: 272 })
   const [workspaceHeight, setWorkspaceHeight] = useState(544)
   const fileInput = useRef<HTMLInputElement>(null)
   const menuBarRef = useRef<HTMLElement>(null)
+  const flowInstanceRef = useRef<{ screenToFlowPosition: (position: { x: number; y: number }) => { x: number; y: number } } | null>(null)
+  const historyRef = useRef<HistoryState | null>(null)
+  const snapshot = (): HistorySnapshot => ({ projectId, projectName, systemPolicy: structuredClone(systemPolicy), nodes: historyNodes(nodes), edges: historyEdges(edges) })
+  if (!historyRef.current) historyRef.current = { undo: [], redo: [], current: snapshot() }
 
   useEffect(() => {
     if (!openMenu) return
@@ -432,6 +434,78 @@ export default function App() {
     window.addEventListener('keydown', closeOnEscape)
     return () => window.removeEventListener('keydown', closeOnEscape)
   }, [showProjectLibrary])
+
+  useEffect(() => {
+    const history = historyRef.current
+    if (!history) return
+    const next = snapshot()
+    if (JSON.stringify(history.current) === JSON.stringify(next)) return
+    history.undo = [...history.undo.slice(-99), history.current]
+    history.current = next
+    history.redo = []
+    setHistoryRevision((current) => current + 1)
+  }, [nodes, edges, projectId, projectName, systemPolicy])
+
+  const applyHistorySnapshot = (snapshotToApply: HistorySnapshot) => {
+    setProjectId(snapshotToApply.projectId)
+    setProjectName(snapshotToApply.projectName)
+    setSystemPolicy(structuredClone(snapshotToApply.systemPolicy))
+    setNodes(structuredClone(snapshotToApply.nodes))
+    setEdges(structuredClone(snapshotToApply.edges))
+    setSelection(null)
+    setConnectionSelection([])
+  }
+
+  const undo = () => {
+    const history = historyRef.current
+    if (!history || !history.undo.length) return
+    const previous = history.undo.pop()!
+    history.redo = [history.current, ...history.redo].slice(0, 100)
+    history.current = previous
+    applyHistorySnapshot(previous)
+    setHistoryRevision((current) => current + 1)
+    setSaveMessage('直前の操作を元に戻しました。')
+  }
+
+  const redo = () => {
+    const history = historyRef.current
+    if (!history || !history.redo.length) return
+    const next = history.redo.shift()!
+    history.undo = [...history.undo, history.current].slice(-100)
+    history.current = next
+    applyHistorySnapshot(next)
+    setHistoryRevision((current) => current + 1)
+    setSaveMessage('操作をやり直しました。')
+  }
+
+  useEffect(() => {
+    const handleKeyboardShortcut = (event: KeyboardEvent) => {
+      const target = event.target instanceof Element ? event.target : null
+      const isEditingText = Boolean(target?.closest('input, textarea, select, [contenteditable="true"]'))
+      if (isEditingText) return
+      const command = event.metaKey || event.ctrlKey
+      if (command && event.key.toLowerCase() === 'z') {
+        event.preventDefault()
+        if (event.shiftKey) redo()
+        else undo()
+      } else if (event.ctrlKey && event.key.toLowerCase() === 'y') {
+        event.preventDefault()
+        redo()
+      } else if (command && event.key.toLowerCase() === 's') {
+        event.preventDefault()
+        saveInBrowser()
+      } else if ((event.key === 'Backspace' || event.key === 'Delete') && selection) {
+        event.preventDefault()
+        deleteSelected()
+      } else if (event.key === 'Escape') {
+        setSelection(null)
+        setConnectionSelection([])
+        setEdges((current) => current.map((edge) => ({ ...edge, selected: false })))
+      }
+    }
+    window.addEventListener('keydown', handleKeyboardShortcut)
+    return () => window.removeEventListener('keydown', handleKeyboardShortcut)
+  }, [historyRevision, selection])
 
   const startPanelResize = (panel: 'palette' | 'properties', event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault()
@@ -515,7 +589,7 @@ export default function App() {
     return results
   }, [nodes, edges])
 
-  const addDevice = (kind: DeviceKind) => {
+  const addDevice = (kind: DeviceKind, position?: { x: number; y: number }) => {
     const id = crypto.randomUUID()
     const name = kindLabels[kind]
     const count = nodes.filter((node) => node.data.kind === kind).length + 1
@@ -525,29 +599,12 @@ export default function App() {
       {
         id,
         type: 'device',
-        position: { x: 220 + ((current.length * 45) % 360), y: 470 + ((current.length * 35) % 120) },
+        position: position ?? { x: 220 + ((current.length * 45) % 360), y: 470 + ((current.length * 35) % 120) },
         data: deviceData(kind, displayName),
         style: { borderColor: kindColors[kind] },
       },
     ])
     setSelection({ type: 'node', id })
-  }
-
-  const addCustomDevice = () => {
-    const id = crypto.randomUUID()
-    const displayName = customName.trim() || 'カスタム部品'
-    setNodes((current) => [
-      ...current,
-      {
-        id,
-        type: 'device',
-        position: { x: 220 + ((current.length * 45) % 360), y: 470 + ((current.length * 35) % 120) },
-        data: deviceData('custom', displayName, { iconKey: customIcon, color: customColor }),
-      },
-    ])
-    setSelection({ type: 'node', id })
-    setCustomName('')
-    setShowCustomCreator(false)
   }
 
   const updateServer = (serverId: string, field: EditableField, value: string) => {
@@ -561,6 +618,41 @@ export default function App() {
 
   const updateNode = (field: EditableField, value: string) => {
     if (selectedNode) updateServer(selectedNode.id, field, value)
+  }
+
+  const updateSelectedAppearance = (field: 'displayName' | 'iconKey' | 'color', value: string) => {
+    if (!selectedNode) return
+    setNodes((current) => current.map((node) => {
+      if (node.id !== selectedNode.id) return node
+      const data = { ...node.data, [field]: value }
+      if (field === 'displayName') data.label = value
+      return { ...node, data, style: { ...node.style, borderColor: field === 'color' ? value : data.color } }
+    }))
+  }
+
+  const resetSelectedAppearance = () => {
+    if (!selectedNode) return
+    const iconKey = defaultIcon[selectedNode.data.kind]
+    const color = kindColors[selectedNode.data.kind]
+    updateSelectedAppearance('iconKey', iconKey)
+    updateSelectedAppearance('color', color)
+  }
+
+  const startDeviceDrag = (event: React.DragEvent<HTMLButtonElement>, kind: DeviceKind) => {
+    event.dataTransfer.setData('application/server-design-device', kind)
+    event.dataTransfer.effectAllowed = 'move'
+  }
+
+  const allowDeviceDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+  }
+
+  const dropDevice = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    const kind = event.dataTransfer.getData('application/server-design-device') as DeviceKind
+    if (!(kind in kindLabels) || kind === 'custom' || !flowInstanceRef.current) return
+    addDevice(kind, flowInstanceRef.current.screenToFlowPosition({ x: event.clientX, y: event.clientY }))
   }
 
   const updateMiddleware = (serverId: string, middlewareId: string, field: MiddlewareField, value: string) => {
@@ -603,14 +695,18 @@ export default function App() {
   }
 
   const updateConnectionHandle = (edgeId: string, handle: 'sourceHandle' | 'targetHandle', value: string) => {
-    setEdges((current) => current.map((edge) => edge.id === edgeId ? { ...edge, [handle]: value } : edge))
+    setEdges((current) => current.map((edge) => edge.id === edgeId ? { ...edge, [handle]: value, data: { ...defaultConnectionData(), ...edge.data, manualHandles: true, waypoint: undefined } } : edge))
   }
 
-  const updateWaypoint = (edgeId: string, position: { x: number; y: number }) => {
-    setEdges((current) => current.map((edge) => edge.id === edgeId ? {
-      ...edge,
-      data: { ...defaultConnectionData(), ...edge.data, waypoint: position },
-    } : edge))
+  const updateConnectionEndpoint = (edgeId: string, endpoint: 'source' | 'target', nodeId: string) => {
+    setEdges((current) => current.map((edge) => {
+      if (edge.id !== edgeId) return edge
+      const updated = { ...edge, [endpoint]: nodeId }
+      const source = nodes.find((node) => node.id === updated.source)
+      const target = nodes.find((node) => node.id === updated.target)
+      if (!source || !target) return updated
+      return { ...updated, ...chooseConnectionHandles(source, target), data: { ...defaultConnectionData(), ...edge.data, manualHandles: false, waypoint: undefined } }
+    }))
   }
 
   const selectConnection = (edgeId: string) => {
@@ -665,12 +761,12 @@ export default function App() {
     setSaveMessage(`${source.data.displayName} → ${target.data.displayName} を接続しました。`)
   }
 
-  const optimizeConnections = (layoutNodes = nodes, resetManualWaypoint = false) => {
+  const optimizeConnections = (layoutNodes = nodes, resetManualHandles = false) => {
     setEdges((current) => current.map((edge) => {
-      if (edge.data?.waypoint && !resetManualWaypoint) return edge
       const first = layoutNodes.find((node) => node.id === edge.source)
       const second = layoutNodes.find((node) => node.id === edge.target)
       if (!first || !second) return edge
+      if (edge.data?.manualHandles && !resetManualHandles) return { ...edge, data: { ...defaultConnectionData(), ...edge.data, waypoint: undefined } }
       const source = first
       const target = second
       return {
@@ -679,7 +775,7 @@ export default function App() {
         target: target.id,
         ...chooseConnectionHandles(source, target),
         type: 'editable',
-        data: { ...defaultConnectionData(), ...edge.data, waypoint: undefined },
+        data: { ...defaultConnectionData(), ...edge.data, manualHandles: false, waypoint: undefined },
       }
     }))
   }
@@ -879,7 +975,7 @@ export default function App() {
       <header className="app-header">
         <div>
           <p className="eyebrow">PROTOTYPE / MVP</p>
-          <h1>サーバー構築・設計GUIツール</h1>
+          <h1>Orden</h1>
           <label className="project-name">システム名<input value={projectName} onChange={(event) => { setProjectName(event.target.value); setSaveMessage('') }} placeholder="例: 販売管理システム" /></label>
           <div className="breadcrumb">
             <button onClick={() => setView({ level: 1 })}>レベル1 全体構成図</button>
@@ -907,6 +1003,9 @@ export default function App() {
         <div className="menu-group">
           <button className={openMenu === 'edit' ? 'menu-trigger active' : 'menu-trigger'} aria-haspopup="menu" aria-expanded={openMenu === 'edit'} onClick={() => setOpenMenu((current) => current === 'edit' ? null : 'edit')}>編集</button>
           {openMenu === 'edit' && <div className="menu-dropdown" role="menu">
+            <button role="menuitem" disabled={!historyRef.current?.undo.length} onClick={runMenuAction(undo)}>元に戻す <span className="shortcut">⌘Z / Ctrl+Z</span></button>
+            <button role="menuitem" disabled={!historyRef.current?.redo.length} onClick={runMenuAction(redo)}>やり直す <span className="shortcut">⌘⇧Z / Ctrl+Y</span></button>
+            <span className="menu-divider" />
             <button role="menuitem" disabled={!selection} onClick={runMenuAction(deleteSelected)}>選択中の部品・接続を削除</button>
             <span className="menu-divider" />
             <button role="menuitem" disabled={view.level !== 1} onClick={runMenuAction(autoArrangeDiagram)}>構成図を自動整列</button>
@@ -922,6 +1021,15 @@ export default function App() {
             <button role="menuitem" disabled={view.level !== 1} onClick={runMenuAction(() => { setPanelWidths({ palette: 200, properties: 272 }); setWorkspaceHeight(544); setSaveMessage('表示領域のサイズを初期値に戻しました。') })}>表示領域のサイズを戻す</button>
           </div>}
         </div>
+        <div className="menu-group">
+          <button className={openMenu === 'layout' ? 'menu-trigger active' : 'menu-trigger'} aria-haspopup="menu" aria-expanded={openMenu === 'layout'} onClick={() => setOpenMenu((current) => current === 'layout' ? null : 'layout')}>レイアウト</button>
+          {openMenu === 'layout' && <div className="menu-dropdown" role="menu">
+            <button role="menuitem" disabled={!selectedNode} onClick={runMenuAction(() => setShowLayoutEditor(true))}>選択中の部品の見た目を編集</button>
+            <button role="menuitem" disabled={!selectedNode} onClick={runMenuAction(resetSelectedAppearance)}>アイコン・色を初期値へ戻す</button>
+            <span className="menu-divider" />
+            <button role="menuitem" disabled={view.level !== 1} onClick={runMenuAction(autoArrangeDiagram)}>構成図を自動整列</button>
+          </div>}
+        </div>
         <input ref={fileInput} className="hidden" type="file" accept="application/json,.json" onChange={openProject} />
       </nav>
 
@@ -934,27 +1042,14 @@ export default function App() {
         </section>
       </div>}
 
+      {showLayoutEditor && selectedNode && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowLayoutEditor(false) }}><section className="layout-editor panel" role="dialog" aria-modal="true" aria-label="部品の見た目を編集" onMouseDown={(event) => event.stopPropagation()}><div className="panel-heading"><div><h2>部品の見た目を編集</h2><p>{selectedNode.data.displayName}</p></div><button onClick={() => setShowLayoutEditor(false)}>閉じる</button></div><label>部品名<input value={selectedNode.data.displayName} onChange={(event) => updateSelectedAppearance('displayName', event.target.value)} /></label><label>アイコン<select value={selectedNode.data.iconKey} onChange={(event) => updateSelectedAppearance('iconKey', event.target.value)}>{(Object.keys(iconLabels) as IconKey[]).map((key) => <option value={key} key={key}>{iconLabels[key]}</option>)}</select></label><label>色<input className="color-input" type="color" value={selectedNode.data.color} onChange={(event) => updateSelectedAppearance('color', event.target.value)} /></label><div className="layout-editor-preview"><FontAwesomeIcon icon={iconFor(selectedNode.data)} style={{ color: selectedNode.data.color }} /><strong>{selectedNode.data.displayName || '名称未設定'}</strong></div><div className="layout-editor-actions"><button onClick={resetSelectedAppearance}>アイコン・色を初期値へ戻す</button><button className="primary" onClick={() => setShowLayoutEditor(false)}>完了</button></div></section></div>}
+
       {view.level === 1 ? <>
       <section className="workspace" style={workspaceStyle}>
         <aside className="palette panel">
           <h2>部品一覧</h2>
-          <p>クリックして部品を追加</p>
-          {(Object.keys(kindLabels).filter((kind) => kind !== 'custom') as DeviceKind[]).map((kind) => (
-            <button className="device-button" key={kind} onClick={() => addDevice(kind)}>
-              <FontAwesomeIcon className="palette-icon" icon={iconDefinitions[defaultIcon[kind]]} style={{ color: kindColors[kind] }} />
-              {kindLabels[kind]}
-            </button>
-          ))}
-          <button className="device-button custom-trigger" onClick={() => setShowCustomCreator((current) => !current)}>
-            <FontAwesomeIcon className="palette-icon" icon={faBox} />
-            部品を自分で追加
-          </button>
-          {showCustomCreator && <div className="custom-creator">
-            <label>部品名<input value={customName} onChange={(event) => setCustomName(event.target.value)} placeholder="例: ロードバランサー" /></label>
-            <label>アイコン<select value={customIcon} onChange={(event) => setCustomIcon(event.target.value as IconKey)}>{(Object.keys(iconLabels) as IconKey[]).map((key) => <option value={key} key={key}>{iconLabels[key]}</option>)}</select></label>
-            <label>色<input className="color-input" type="color" value={customColor} onChange={(event) => setCustomColor(event.target.value)} /></label>
-            <button className="primary" onClick={addCustomDevice}>構成図に追加</button>
-          </div>}
+          <p>ドラッグして配置、またはクリックして追加</p>
+          <div className="device-catalog">{(Object.keys(kindLabels).filter((kind) => kind !== 'custom') as DeviceKind[]).map((kind) => <button className="device-button" key={kind} draggable onDragStart={(event) => startDeviceDrag(event, kind)} onClick={() => addDevice(kind)}><FontAwesomeIcon className="palette-icon" icon={iconDefinitions[defaultIcon[kind]]} style={{ color: kindColors[kind] }} /><span>{kindLabels[kind]}</span></button>)}</div>
           <div className="palette-note">接続モードでは、橙の接続元から青の接続先へドラッグして接続します。上下左右すべての支点を使えます。</div>
         </aside>
 
@@ -962,8 +1057,8 @@ export default function App() {
 
         <section className="canvas panel" aria-label="構成図キャンバス">
           <div className="canvas-title"><span>全体構成図</span><div className="canvas-actions"><small>{nodes.length} 部品 / {edges.length} 接続</small><button className="auto-layout" onClick={autoArrangeDiagram}>構成図を自動整列</button><button className="auto-layout" onClick={() => { optimizeConnections(nodes, true); setSaveMessage('接続線の支点と経路を自動整列しました。') }}>線を自動整列</button>{connectionNodeIds.length > 0 && <button className={connectionNodeIds.length === 2 ? 'selected-connect active' : 'selected-connect'} disabled={connectionNodeIds.length !== 2} onClick={connectSelectedNodes}>{connectionNodeIds.length === 2 ? '選択した2部品を接続' : `あと${2 - connectionNodeIds.length}部品を選択`}</button>}<button className={isConnectionMode ? 'connection-mode active' : 'connection-mode'} onClick={() => setIsConnectionMode((current) => !current)}>{isConnectionMode ? '接続モード中：支点をドラッグ' : '接続モード'}</button></div></div>
-          <div className={isConnectionMode ? 'flow-wrap is-connection-mode' : 'flow-wrap'}>
-            <EdgeActionsContext.Provider value={{ updateWaypoint }}><ReactFlow
+          <div className={isConnectionMode ? 'flow-wrap is-connection-mode' : 'flow-wrap'} onDragOver={allowDeviceDrop} onDrop={dropDevice}>
+            <ReactFlow
               nodes={flowNodes}
               edges={flowEdges}
               onNodesChange={onNodesChange}
@@ -991,13 +1086,14 @@ export default function App() {
               }}
               nodeTypes={nodeTypes}
               edgeTypes={edgeTypes}
+              onInit={(instance) => { flowInstanceRef.current = instance }}
               fitView
               deleteKeyCode={null}
             >
               <Background gap={18} size={1} color="#cbd5e1" />
               <Controls />
               <MiniMap nodeColor={(node) => (node.data as DeviceData).color ?? kindColors[(node.data as DeviceData).kind]} zoomable pannable />
-            </ReactFlow></EdgeActionsContext.Provider>
+            </ReactFlow>
           </div>
         </section>
 
@@ -1008,7 +1104,7 @@ export default function App() {
           {selectedNode ? (
             <PropertyEditor node={selectedNode} nodes={nodes} edges={edges} onChange={updateNode} onSelectConnection={selectConnection} onOpenDetails={() => selectedNode.data.kind === 'server' && setView({ level: 2, serverId: selectedNode.id })} />
           ) : selectedEdge ? (
-            <ConnectionEditor edge={selectedEdge} nodes={nodes} onChange={updateConnection} onChangeHandle={updateConnectionHandle} />
+            <ConnectionEditor edge={selectedEdge} nodes={nodes} onChange={updateConnection} onChangeHandle={updateConnectionHandle} onChangeEndpoint={updateConnectionEndpoint} />
           ) : (
             <SystemPolicyEditor systemPolicy={systemPolicy} onChange={(field, value) => { setSystemPolicy((current) => ({ ...current, [field]: value })); setSaveMessage('') }} />
           )}
@@ -1133,14 +1229,16 @@ function PropertyEditor({ node, nodes, edges, onChange, onSelectConnection, onOp
   </div>
 }
 
-function ConnectionEditor({ edge, nodes, onChange, onChangeHandle }: { edge: Edge<ConnectionData>; nodes: Node<DeviceData>[]; onChange: (edgeId: string, field: ConnectionField, value: string) => void; onChangeHandle: (edgeId: string, handle: 'sourceHandle' | 'targetHandle', value: string) => void }) {
+function ConnectionEditor({ edge, nodes, onChange, onChangeHandle, onChangeEndpoint }: { edge: Edge<ConnectionData>; nodes: Node<DeviceData>[]; onChange: (edgeId: string, field: ConnectionField, value: string) => void; onChangeHandle: (edgeId: string, handle: 'sourceHandle' | 'targetHandle', value: string) => void; onChangeEndpoint: (edgeId: string, endpoint: 'source' | 'target', nodeId: string) => void }) {
   const data = { ...defaultConnectionData(), ...edge.data }
   const sourceName = nodes.find((node) => node.id === edge.source)?.data.displayName ?? edge.source
   const targetName = nodes.find((node) => node.id === edge.target)?.data.displayName ?? edge.target
   return <div className="edge-details connection-editor">
     <strong>{sourceName} → {targetName}</strong>
-    <p>接続線そのものの情報です。ここで変更した内容は、両方の部品の「接続先情報」に反映されます。</p>
+    <p>線の経路は自動で最適化されます。ここでは接続する部品と、上下左右の接続支点を変更できます。</p>
+    <label>接続元の部品<select value={edge.source} onChange={(event) => onChangeEndpoint(edge.id, 'source', event.target.value)}>{nodes.map((node) => <option key={node.id} value={node.id}>{node.data.displayName}</option>)}</select></label>
     <label>接続元の支点<select value={edge.sourceHandle ?? 'source-right'} onChange={(event) => onChangeHandle(edge.id, 'sourceHandle', event.target.value)}><option value="source-top">上</option><option value="source-right">右</option><option value="source-bottom">下</option><option value="source-left">左</option></select></label>
+    <label>接続先の部品<select value={edge.target} onChange={(event) => onChangeEndpoint(edge.id, 'target', event.target.value)}>{nodes.map((node) => <option key={node.id} value={node.id}>{node.data.displayName}</option>)}</select></label>
     <label>接続先の支点<select value={edge.targetHandle ?? 'target-left'} onChange={(event) => onChangeHandle(edge.id, 'targetHandle', event.target.value)}><option value="target-top">上</option><option value="target-right">右</option><option value="target-bottom">下</option><option value="target-left">左</option></select></label>
     <label>接続種別<select value={data.connectionType} onChange={(event) => onChange(edge.id, 'connectionType', event.target.value)}><option value="network">ネットワーク</option><option value="management">管理ネットワーク</option><option value="storage">ストレージ</option><option value="internet">インターネット</option><option value="other">その他</option></select></label>
     <label>接続元インターフェース<input value={data.sourceInterface} onChange={(event) => onChange(edge.id, 'sourceInterface', event.target.value)} placeholder="例: eth0" /></label>
