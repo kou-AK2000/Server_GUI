@@ -27,7 +27,7 @@ import { faBox, faCloud, faDatabase, faHardDrive, faNetworkWired, faRoute, faSer
 
 type DeviceKind = 'server' | 'l2-switch' | 'router' | 'firewall' | 'custom'
 type IconKey = 'server' | 'network' | 'router' | 'shield' | 'database' | 'storage' | 'cloud' | 'box'
-type EditableField = 'displayName' | 'hostname' | 'ipAddress' | 'osName' | 'osVersion' | 'cpu' | 'memory' | 'disk' | 'purpose' | 'managementIpAddress' | 'notes'
+type EditableField = 'displayName' | 'hostname' | 'ipAddress' | 'osName' | 'osVersion' | 'cpu' | 'memory' | 'disk' | 'purpose' | 'managementIpAddress' | 'notes' | 'deploymentType' | 'platformProvider' | 'platformLocation' | 'platformResource' | 'platformDetail'
 type Middleware = { id: string; name: string; version: string; port: string; runtime: string; framework: string; executionMethod: string; repository: string; configurationPath: string; configurationNote: string }
 type MiddlewareField = Exclude<keyof Middleware, 'id'>
 type View =
@@ -50,18 +50,58 @@ type DeviceData = {
   purpose: string
   managementIpAddress: string
   notes: string
+  deploymentType: string
+  platformProvider: string
+  platformLocation: string
+  platformResource: string
+  platformDetail: string
   middleware: Middleware[]
   iconKey: IconKey
   color: string
+}
+
+type SystemPolicy = {
+  architecturePolicy: string
+  sharedNetwork: string
+  governance: string
+  availabilityPolicy: string
+  boundaryPolicy: string
+  notes: string
 }
 
 type Selection = { type: 'node'; id: string } | { type: 'edge'; id: string } | null
 type Validation = { severity: 'warning' | 'info'; message: string; nodeIds: string[] }
 type ConnectionData = { connectionType: string; sourceInterface: string; targetInterface: string; notes: string; waypoint?: { x: number; y: number } }
 type ConnectionField = Exclude<keyof ConnectionData, 'waypoint'>
-type StoredProject = { schemaVersion: '1.1'; id: string; name: string; nodes: Node<DeviceData>[]; edges: Edge<ConnectionData>[]; updatedAt: string }
+type StoredProject = { schemaVersion: '1.3'; id: string; name: string; systemPolicy: SystemPolicy; nodes: Node<DeviceData>[]; edges: Edge<ConnectionData>[]; updatedAt: string }
 
 const browserStorageKey = 'server-design-gui.projects.v1'
+const emptySystemPolicy = (): SystemPolicy => ({ architecturePolicy: '', sharedNetwork: '', governance: '', availabilityPolicy: '', boundaryPolicy: '', notes: '' })
+
+function normalizeSystemPolicy(value: Record<string, unknown> | undefined): SystemPolicy {
+  if (!value) return emptySystemPolicy()
+  return {
+    architecturePolicy: typeof value.architecturePolicy === 'string' ? value.architecturePolicy : typeof value.environmentType === 'string' ? value.environmentType : '',
+    sharedNetwork: typeof value.sharedNetwork === 'string' ? value.sharedNetwork : typeof value.networkName === 'string' ? value.networkName : '',
+    governance: typeof value.governance === 'string' ? value.governance : typeof value.accountOrOrg === 'string' ? value.accountOrOrg : '',
+    availabilityPolicy: typeof value.availabilityPolicy === 'string' ? value.availabilityPolicy : '',
+    boundaryPolicy: typeof value.boundaryPolicy === 'string' ? value.boundaryPolicy : typeof value.provider === 'string' ? value.provider : '',
+    notes: typeof value.notes === 'string' ? value.notes : typeof value.regionOrSite === 'string' ? value.regionOrSite : '',
+  }
+}
+
+const deploymentOptions = ['物理サーバー（オンプレ）', '仮想マシン', 'クラウドVM', 'コンテナ／Kubernetes', 'PaaS／SaaS'] as const
+
+function deploymentProfile(type: string) {
+  switch (type) {
+    case '物理サーバー（オンプレ）': return { provider: 'DC・拠点', location: 'ラック・設置場所', resource: '筐体・機器名', detail: '資産・保守情報', examples: ['例: 東京DC', '例: R03 / 12U', '例: Dell PowerEdge R760', '例: 資産番号 / 保守契約'] }
+    case '仮想マシン': return { provider: '仮想化基盤', location: 'クラスタ', resource: '物理ホスト', detail: 'VM名', examples: ['例: VMware vSphere', '例: prod-cluster', '例: esxi-01', '例: web01'] }
+    case 'クラウドVM': return { provider: 'クラウド事業者・アカウント', location: 'リージョン・AZ', resource: 'サービス・インスタンス', detail: 'インスタンスタイプ', examples: ['例: AWS / production account', '例: ap-northeast-1a', '例: EC2 i-0123456789', '例: t3.large'] }
+    case 'コンテナ／Kubernetes': return { provider: 'コンテナ基盤', location: 'クラスタ', resource: 'namespace・ワークロード', detail: 'イメージ・レプリカ数', examples: ['例: Amazon EKS', '例: prod-eks', '例: production / web-api', '例: registry/web:1.2 / 3 replicas'] }
+    case 'PaaS／SaaS': return { provider: '提供事業者・サービス', location: 'テナント・リージョン', resource: '契約プラン・リソース', detail: '責任分界・契約メモ', examples: ['例: Salesforce', '例: tenant-a / 東京', '例: Enterprise plan', '例: ベンダー運用範囲'] }
+    default: return { provider: 'クラウド／仮想化基盤', location: 'リージョン・拠点', resource: 'リソース・クラスタ', detail: '補足情報', examples: ['例: AWS / VMware vSphere', '例: ap-northeast-1 / 東京DC', '例: EC2 i-xxxx / EKS cluster', '例: 任意の補足情報'] }
+  }
+}
 const EdgeActionsContext = createContext<{ updateWaypoint: (edgeId: string, position: { x: number; y: number }) => void } | null>(null)
 
 const kindLabels: Record<DeviceKind, string> = {
@@ -133,6 +173,11 @@ function deviceData(kind: DeviceKind, displayName: string, values: Partial<Omit<
     purpose: '',
     managementIpAddress: '',
     notes: '',
+    deploymentType: '',
+    platformProvider: '',
+    platformLocation: '',
+    platformResource: '',
+    platformDetail: '',
     iconKey: defaultIcon[kind],
     color: kindColors[kind],
     ...values,
@@ -145,21 +190,21 @@ const initialNodes: Node<DeviceData>[] = [
     id: 'web01',
     type: 'device',
     position: { x: 90, y: 120 },
-    data: deviceData('server', 'Webサーバー', { hostname: 'web01', ipAddress: '192.168.10.11', osName: 'RHEL', osVersion: '9.6', cpu: '4 vCPU', memory: '8 GB', disk: '100 GB', purpose: 'Webサーバー', middleware: [{ id: 'nginx-web01', name: 'Nginx', version: '1.24', port: '80, 443', runtime: 'Nginx 1.24', executionMethod: 'systemd', configurationPath: '/etc/nginx/nginx.conf', configurationNote: 'TLS終端と静的コンテンツ配信' }, { id: 'php-fpm-web01', name: 'PHP-FPM', version: '8.3', port: '9000', runtime: 'PHP 8.3', executionMethod: 'systemd', configurationPath: '/etc/php-fpm.d/www.conf', configurationNote: 'Webアプリケーション実行' }] }),
+    data: deviceData('server', 'Webサーバー', { hostname: 'web01', ipAddress: '192.168.10.11', osName: 'RHEL', osVersion: '9.6', cpu: '4 vCPU', memory: '8 GB', disk: '100 GB', purpose: 'Webサーバー', deploymentType: '仮想マシン', platformProvider: 'VMware vSphere', platformLocation: 'prod-cluster', platformResource: 'esxi-01', platformDetail: 'web01', middleware: [{ id: 'nginx-web01', name: 'Nginx', version: '1.24', port: '80, 443', runtime: 'Nginx 1.24', executionMethod: 'systemd', configurationPath: '/etc/nginx/nginx.conf', configurationNote: 'TLS終端と静的コンテンツ配信' }, { id: 'php-fpm-web01', name: 'PHP-FPM', version: '8.3', port: '9000', runtime: 'PHP 8.3', executionMethod: 'systemd', configurationPath: '/etc/php-fpm.d/www.conf', configurationNote: 'Webアプリケーション実行' }] }),
     style: { borderColor: kindColors.server },
   },
   {
     id: 'app01',
     type: 'device',
     position: { x: 390, y: 120 },
-    data: deviceData('server', 'APサーバー', { hostname: 'app01', ipAddress: '192.168.20.11', osName: 'RHEL', osVersion: '9.6', cpu: '4 vCPU', memory: '8 GB', disk: '100 GB', purpose: 'アプリケーションサーバー', middleware: [{ id: 'java-app01', name: 'Java Runtime', version: '21', port: '8080', runtime: 'Java 21', executionMethod: 'systemd', configurationNote: 'アプリケーション実行環境' }] }),
+    data: deviceData('server', 'APサーバー', { hostname: 'app01', ipAddress: '192.168.20.11', osName: 'RHEL', osVersion: '9.6', cpu: '4 vCPU', memory: '8 GB', disk: '100 GB', purpose: 'アプリケーションサーバー', deploymentType: '仮想マシン', platformProvider: 'VMware vSphere', platformLocation: 'prod-cluster', platformResource: 'esxi-02', platformDetail: 'app01', middleware: [{ id: 'java-app01', name: 'Java Runtime', version: '21', port: '8080', runtime: 'Java 21', executionMethod: 'systemd', configurationNote: 'アプリケーション実行環境' }] }),
     style: { borderColor: kindColors.server },
   },
   {
     id: 'db01',
     type: 'device',
     position: { x: 690, y: 120 },
-    data: deviceData('server', 'DBサーバー', { hostname: 'db01', ipAddress: '192.168.30.11', osName: 'RHEL', osVersion: '9.6', cpu: '8 vCPU', memory: '16 GB', disk: '200 GB', purpose: 'データベースサーバー', middleware: [{ id: 'postgres-db01', name: 'PostgreSQL', version: '16', port: '5432', runtime: 'PostgreSQL 16', executionMethod: 'systemd', configurationPath: '/var/lib/pgsql/data/postgresql.conf', configurationNote: '業務データベース' }] }),
+    data: deviceData('server', 'DBサーバー', { hostname: 'db01', ipAddress: '192.168.30.11', osName: 'RHEL', osVersion: '9.6', cpu: '8 vCPU', memory: '16 GB', disk: '200 GB', purpose: 'データベースサーバー', deploymentType: '仮想マシン', platformProvider: 'VMware vSphere', platformLocation: 'prod-cluster', platformResource: 'esxi-03', platformDetail: 'db01', middleware: [{ id: 'postgres-db01', name: 'PostgreSQL', version: '16', port: '5432', runtime: 'PostgreSQL 16', executionMethod: 'systemd', configurationPath: '/var/lib/pgsql/data/postgresql.conf', configurationNote: '業務データベース' }] }),
     style: { borderColor: kindColors.server },
   },
   {
@@ -310,17 +355,19 @@ function levelOneDiagramSvg(nodes: Node<DeviceData>[], edges: Edge<ConnectionDat
 
 function levelTwoDiagramSvg(server: Node<DeviceData>) {
   const { data } = server
+  const profile = deploymentProfile(data.deploymentType)
   const width = 860
   const serviceRows = Math.max(1, Math.ceil(data.middleware.length / 3))
-  const height = 410 + serviceRows * 92
+  const middlewareY = 312
+  const lowerY = middlewareY + serviceRows * 84 + 54
+  const height = lowerY + 114
   const services = data.middleware.length ? data.middleware.map((item, index) => {
     const x = 55 + (index % 3) * 250
-    const y = 230 + Math.floor(index / 3) * 84
+    const y = middlewareY + 36 + Math.floor(index / 3) * 84
     return `<g><rect x="${x}" y="${y}" width="215" height="58" rx="7" fill="#ffffff" stroke="#9a7ad4" stroke-width="2"/><text x="${x + 12}" y="${y + 25}" fill="#4c317f" font-family="Arial, sans-serif" font-size="14" font-weight="700">${escapeXml(item.name || '名称未設定')}</text><text x="${x + 12}" y="${y + 45}" fill="#6b7280" font-family="Arial, sans-serif" font-size="11">${escapeXml(item.runtime || item.port || 'ランタイム未設定')}</text></g>`
-  }).join('') : '<text x="55" y="265" fill="#6b7280" font-family="Arial, sans-serif" font-size="14">ミドルウェア未登録</text>'
-  const lowerY = 230 + serviceRows * 84 + 18
+  }).join('') : `<text x="55" y="${middlewareY + 70}" fill="#6b7280" font-family="Arial, sans-serif" font-size="14">ミドルウェア未登録</text>`
   const title = escapeXml(data.displayName)
-  return { width, height, svg: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="#f8fbff"/><rect x="20" y="18" width="820" height="${height - 36}" rx="12" fill="#ffffff" stroke="#86a9d7" stroke-width="3"/><rect x="40" y="38" width="780" height="42" rx="7" fill="#e2eefc" stroke="#7d9fc8"/><text x="56" y="64" fill="#214f83" font-family="Arial, sans-serif" font-size="17" font-weight="700">サーバー / VM　${title}</text><rect x="40" y="98" width="370" height="105" rx="8" fill="#f8fbff" stroke="#b8cde5"/><text x="56" y="124" fill="#274766" font-family="Arial, sans-serif" font-size="15" font-weight="700">HW・リソース</text><text x="56" y="154" fill="#334155" font-family="Arial, sans-serif" font-size="13">CPU: ${escapeXml(data.cpu || '未設定')}</text><text x="56" y="180" fill="#334155" font-family="Arial, sans-serif" font-size="13">メモリ: ${escapeXml(data.memory || '未設定')}</text><rect x="430" y="98" width="390" height="105" rx="8" fill="#f7fcf8" stroke="#a8d0b6"/><text x="446" y="124" fill="#274766" font-family="Arial, sans-serif" font-size="15" font-weight="700">OS</text><text x="446" y="154" fill="#334155" font-family="Arial, sans-serif" font-size="13">${escapeXml(`${data.osName} ${data.osVersion}`.trim() || '未設定')}</text><text x="446" y="180" fill="#334155" font-family="Arial, sans-serif" font-size="13">${escapeXml(data.hostname || 'ホスト名未設定')} / ${escapeXml(data.ipAddress || 'IP未設定')}</text><rect x="40" y="218" width="780" height="${serviceRows * 84 + 36}" rx="8" fill="#fbf9ff" stroke="#d5c5ef"/><text x="56" y="244" fill="#4c317f" font-family="Arial, sans-serif" font-size="15" font-weight="700">MW・アプリケーション</text>${services}<rect x="40" y="${lowerY}" width="370" height="78" rx="8" fill="#f7fcff" stroke="#b6d6e9"/><text x="56" y="${lowerY + 27}" fill="#274766" font-family="Arial, sans-serif" font-size="15" font-weight="700">ネットワーク</text><text x="56" y="${lowerY + 52}" fill="#334155" font-family="Arial, sans-serif" font-size="13">eth0 / 管理IP: ${escapeXml(data.managementIpAddress || '未設定')}</text><rect x="430" y="${lowerY}" width="390" height="78" rx="8" fill="#fffdf7" stroke="#e4d09e"/><text x="446" y="${lowerY + 27}" fill="#274766" font-family="Arial, sans-serif" font-size="15" font-weight="700">ストレージ・データ</text><text x="446" y="${lowerY + 52}" fill="#334155" font-family="Arial, sans-serif" font-size="13">ディスク: ${escapeXml(data.disk || '未設定')}</text></svg>` }
+  return { width, height, svg: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="#f8fbff"/><rect x="20" y="18" width="820" height="${height - 36}" rx="12" fill="#ffffff" stroke="#86a9d7" stroke-width="3"/><rect x="40" y="38" width="780" height="42" rx="7" fill="#e2eefc" stroke="#7d9fc8"/><text x="56" y="64" fill="#214f83" font-family="Arial, sans-serif" font-size="17" font-weight="700">サーバー / VM　${title}</text><rect x="40" y="98" width="780" height="88" rx="8" fill="#f5fcfc" stroke="#8ac4c8"/><text x="56" y="124" fill="#245d63" font-family="Arial, sans-serif" font-size="15" font-weight="700">配置・実行基盤: ${escapeXml(data.deploymentType || '未設定')}</text><text x="56" y="151" fill="#334155" font-family="Arial, sans-serif" font-size="13">${escapeXml(profile.provider)}: ${escapeXml(data.platformProvider || '未設定')}　/　${escapeXml(profile.location)}: ${escapeXml(data.platformLocation || '未設定')}</text><text x="56" y="174" fill="#334155" font-family="Arial, sans-serif" font-size="13">${escapeXml(profile.resource)}: ${escapeXml(data.platformResource || '未設定')}　/　${escapeXml(profile.detail)}: ${escapeXml(data.platformDetail || '未設定')}</text><rect x="40" y="202" width="370" height="92" rx="8" fill="#f8fbff" stroke="#b8cde5"/><text x="56" y="228" fill="#274766" font-family="Arial, sans-serif" font-size="15" font-weight="700">HW・リソース</text><text x="56" y="258" fill="#334155" font-family="Arial, sans-serif" font-size="13">CPU: ${escapeXml(data.cpu || '未設定')}</text><text x="56" y="281" fill="#334155" font-family="Arial, sans-serif" font-size="13">メモリ: ${escapeXml(data.memory || '未設定')}</text><rect x="430" y="202" width="390" height="92" rx="8" fill="#f7fcf8" stroke="#a8d0b6"/><text x="446" y="228" fill="#274766" font-family="Arial, sans-serif" font-size="15" font-weight="700">OS</text><text x="446" y="258" fill="#334155" font-family="Arial, sans-serif" font-size="13">${escapeXml(`${data.osName} ${data.osVersion}`.trim() || '未設定')}</text><text x="446" y="281" fill="#334155" font-family="Arial, sans-serif" font-size="13">${escapeXml(data.hostname || 'ホスト名未設定')} / ${escapeXml(data.ipAddress || 'IP未設定')}</text><rect x="40" y="${middlewareY}" width="780" height="${serviceRows * 84 + 36}" rx="8" fill="#fbf9ff" stroke="#d5c5ef"/><text x="56" y="${middlewareY + 26}" fill="#4c317f" font-family="Arial, sans-serif" font-size="15" font-weight="700">MW・アプリケーション</text>${services}<rect x="40" y="${lowerY}" width="370" height="78" rx="8" fill="#f7fcff" stroke="#b6d6e9"/><text x="56" y="${lowerY + 27}" fill="#274766" font-family="Arial, sans-serif" font-size="15" font-weight="700">ネットワーク</text><text x="56" y="${lowerY + 52}" fill="#334155" font-family="Arial, sans-serif" font-size="13">eth0 / 管理IP: ${escapeXml(data.managementIpAddress || '未設定')}</text><rect x="430" y="${lowerY}" width="390" height="78" rx="8" fill="#fffdf7" stroke="#e4d09e"/><text x="446" y="${lowerY + 27}" fill="#274766" font-family="Arial, sans-serif" font-size="15" font-weight="700">ストレージ・データ</text><text x="446" y="${lowerY + 52}" fill="#334155" font-family="Arial, sans-serif" font-size="13">ディスク: ${escapeXml(data.disk || '未設定')}</text></svg>` }
 }
 
 function normalizeNodes(nodes: Node<DeviceData>[]) {
@@ -358,6 +405,7 @@ export default function App() {
   const [connectionNodeIds, setConnectionNodeIds] = useState<string[]>([])
   const [projectId, setProjectId] = useState<string>(() => crypto.randomUUID())
   const [projectName, setProjectName] = useState('新しいシステム')
+  const [systemPolicy, setSystemPolicy] = useState<SystemPolicy>(() => emptySystemPolicy())
   const [savedProjects, setSavedProjects] = useState<StoredProject[]>(readBrowserProjects)
   const [showProjectLibrary, setShowProjectLibrary] = useState(false)
   const [saveMessage, setSaveMessage] = useState('')
@@ -674,11 +722,11 @@ export default function App() {
   }
 
   const saveProject = () => {
-    download(`${projectName || 'server-design-project'}.json`, JSON.stringify({ schemaVersion: '1.1', id: projectId, name: projectName, nodes, edges }, null, 2), 'application/json')
+    download(`${projectName || 'server-design-project'}.json`, JSON.stringify({ schemaVersion: '1.3', id: projectId, name: projectName, systemPolicy, nodes, edges }, null, 2), 'application/json')
   }
 
   const saveInBrowser = () => {
-    const project: StoredProject = { schemaVersion: '1.1', id: projectId, name: projectName.trim() || '名称未設定のシステム', nodes, edges, updatedAt: new Date().toISOString() }
+    const project: StoredProject = { schemaVersion: '1.3', id: projectId, name: projectName.trim() || '名称未設定のシステム', systemPolicy, nodes, edges, updatedAt: new Date().toISOString() }
     const updated = [...savedProjects.filter((item) => item.id !== project.id), project].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
     try {
       localStorage.setItem(browserStorageKey, JSON.stringify(updated))
@@ -693,6 +741,7 @@ export default function App() {
   const openBrowserProject = (project: StoredProject) => {
     setProjectId(project.id)
     setProjectName(project.name)
+    setSystemPolicy(normalizeSystemPolicy(project.systemPolicy as unknown as Record<string, unknown> | undefined))
     setNodes(normalizeNodes(project.nodes))
     setEdges(normalizeEdges(project.edges))
     setSelection(null)
@@ -704,6 +753,7 @@ export default function App() {
   const createNewProject = () => {
     setProjectId(crypto.randomUUID())
     setProjectName('新しいシステム')
+    setSystemPolicy(emptySystemPolicy())
     setNodes([])
     setEdges([])
     setSelection(null)
@@ -721,6 +771,7 @@ export default function App() {
       setEdges(normalizeEdges(parsed.edges))
       setProjectId(parsed.id ?? crypto.randomUUID())
       setProjectName(parsed.name ?? (file.name.replace(/\.json$/i, '') || '読み込み済みシステム'))
+      setSystemPolicy(normalizeSystemPolicy((parsed.systemPolicy ?? (parsed as unknown as { infrastructure?: Record<string, unknown> }).infrastructure) as Record<string, unknown> | undefined))
       setSelection(null)
       setView({ level: 1 })
       setSaveMessage(`「${parsed.name ?? file.name}」を読み込みました。`)
@@ -786,11 +837,12 @@ export default function App() {
       const level1ImageId = workbook.addImage({ base64: await svgToPng(level1Image.svg, level1Image.width, level1Image.height), extension: 'png' })
       level1.addImage(level1ImageId, { tl: { col: 1, row: 2 }, ext: { width: 760, height: Math.round(760 * level1Image.height / level1Image.width) } })
       let level1Row = 4 + Math.ceil((760 * level1Image.height / level1Image.width) / 20)
+      level1Row = addTable(level1, level1Row, 'システム共通方針', ['構成方式', '共通ネットワーク', '管理・運用主体', '可用性方針', '外部連携・境界方針', '共通メモ'], [[systemPolicy.architecturePolicy, systemPolicy.sharedNetwork, systemPolicy.governance, systemPolicy.availabilityPolicy, systemPolicy.boundaryPolicy, systemPolicy.notes]]) + 2
       level1Row = addTable(level1, level1Row, '部品一覧', ['部品ID', '種別', '表示名', 'ホスト名', 'IPアドレス', '管理IPアドレス', '用途', '備考'], nodes.map((node) => [node.id, kindLabels[node.data.kind], node.data.displayName, node.data.hostname, node.data.ipAddress, node.data.managementIpAddress, node.data.purpose, node.data.notes])) + 2
       addTable(level1, level1Row, '接続一覧', ['接続ID', '接続元', '接続先', '接続種別', '接続元IF', '接続先IF', '備考'], edges.map((edge) => [edge.id, nodes.find((node) => node.id === edge.source)?.data.displayName ?? edge.source, nodes.find((node) => node.id === edge.target)?.data.displayName ?? edge.target, edge.data?.connectionType ?? 'network', edge.data?.sourceInterface ?? '', edge.data?.targetInterface ?? '', edge.data?.notes ?? '']))
 
       const level2 = workbook.addWorksheet('レベル2_サーバー詳細')
-      setupSheet(level2, 'レベル2 サーバー詳細図', [20, 18, 18, 18, 16, 16, 18, 18, 22, 22, 32])
+      setupSheet(level2, 'レベル2 サーバー詳細図', [20, 18, 18, 18, 16, 16, 18, 18, 20, 22, 22, 22, 22, 32])
       let level2Row = 3
       for (const server of servers) {
         const image = levelTwoDiagramSvg(server)
@@ -798,7 +850,7 @@ export default function App() {
         level2.addImage(imageId, { tl: { col: 1, row: level2Row }, ext: { width: 760, height: Math.round(760 * image.height / image.width) } })
         level2Row += Math.ceil((760 * image.height / image.width) / 20) + 3
       }
-      addTable(level2, level2Row, 'サーバー詳細一覧', ['サーバー名', 'ホスト名', 'HW・リソース: CPU', 'HW・リソース: メモリ', 'OS名', 'OSバージョン', 'IPアドレス', '管理IPアドレス', 'ストレージ: ディスク', '用途', '備考'], servers.map((node) => [node.data.displayName, node.data.hostname, node.data.cpu, node.data.memory, node.data.osName, node.data.osVersion, node.data.ipAddress, node.data.managementIpAddress, node.data.disk, node.data.purpose, node.data.notes]))
+      addTable(level2, level2Row, 'サーバー詳細一覧', ['サーバー名', '配置形態', 'クラウド／仮想化基盤', '配置先', 'リソース・クラスタ', '補足情報', 'HW・リソース: CPU', 'HW・リソース: メモリ', 'OS名', 'OSバージョン', 'ホスト名', 'IPアドレス', '管理IPアドレス', 'ストレージ: ディスク', '用途', '備考'], servers.map((node) => [node.data.displayName, node.data.deploymentType, node.data.platformProvider, node.data.platformLocation, node.data.platformResource, node.data.platformDetail, node.data.cpu, node.data.memory, node.data.osName, node.data.osVersion, node.data.hostname, node.data.ipAddress, node.data.managementIpAddress, node.data.disk, node.data.purpose, node.data.notes]))
 
       const level3 = workbook.addWorksheet('レベル3_MWサービス')
       setupSheet(level3, 'レベル3 MW・サービス詳細', [20, 18, 22, 22, 20, 18, 16, 16, 32, 32, 40])
@@ -807,7 +859,7 @@ export default function App() {
       const level4 = workbook.addWorksheet('レベル4_設定パラメータ')
       setupSheet(level4, 'レベル4 設定・パラメータ', [16, 20, 22, 20, 20, 42])
       addTable(level4, 4, '設定・パラメータ一覧', ['対象区分', 'サーバー名', 'サービス名', 'カテゴリ', 'パラメータ', '値'], servers.flatMap((node) => [
-        ['サーバー', node.data.displayName, '', 'HW・リソース', 'CPU', node.data.cpu], ['サーバー', node.data.displayName, '', 'HW・リソース', 'メモリ', node.data.memory], ['サーバー', node.data.displayName, '', 'ストレージ・データ', 'ディスク', node.data.disk], ['サーバー', node.data.displayName, '', 'OS', 'ホスト名', node.data.hostname], ['サーバー', node.data.displayName, '', 'OS', 'OS名', node.data.osName], ['サーバー', node.data.displayName, '', 'OS', 'OSバージョン', node.data.osVersion], ['サーバー', node.data.displayName, '', 'ネットワーク', 'IPアドレス', node.data.ipAddress], ['サーバー', node.data.displayName, '', 'ネットワーク', '管理IPアドレス', node.data.managementIpAddress], ['サーバー', node.data.displayName, '', '共通', '用途', node.data.purpose], ['サーバー', node.data.displayName, '', '共通', '備考', node.data.notes],
+        ['サーバー', node.data.displayName, '', '配置・実行基盤', '配置形態', node.data.deploymentType], ['サーバー', node.data.displayName, '', '配置・実行基盤', 'クラウド／仮想化基盤', node.data.platformProvider], ['サーバー', node.data.displayName, '', '配置・実行基盤', 'リージョン・拠点', node.data.platformLocation], ['サーバー', node.data.displayName, '', '配置・実行基盤', 'リソース・クラスタ', node.data.platformResource], ['サーバー', node.data.displayName, '', '配置・実行基盤', '補足情報', node.data.platformDetail], ['サーバー', node.data.displayName, '', 'HW・リソース', 'CPU', node.data.cpu], ['サーバー', node.data.displayName, '', 'HW・リソース', 'メモリ', node.data.memory], ['サーバー', node.data.displayName, '', 'ストレージ・データ', 'ディスク', node.data.disk], ['サーバー', node.data.displayName, '', 'OS', 'ホスト名', node.data.hostname], ['サーバー', node.data.displayName, '', 'OS', 'OS名', node.data.osName], ['サーバー', node.data.displayName, '', 'OS', 'OSバージョン', node.data.osVersion], ['サーバー', node.data.displayName, '', 'ネットワーク', 'IPアドレス', node.data.ipAddress], ['サーバー', node.data.displayName, '', 'ネットワーク', '管理IPアドレス', node.data.managementIpAddress], ['サーバー', node.data.displayName, '', '共通', '用途', node.data.purpose], ['サーバー', node.data.displayName, '', '共通', '備考', node.data.notes],
         ...node.data.middleware.flatMap((middleware) => [['MW・サービス', node.data.displayName, middleware.name, 'アプリケーション・ランタイム', '実行言語・ランタイム', middleware.runtime], ['MW・サービス', node.data.displayName, middleware.name, 'アプリケーション・ランタイム', 'フレームワーク', middleware.framework], ['MW・サービス', node.data.displayName, middleware.name, 'アプリケーション・ランタイム', '実行方式', middleware.executionMethod], ['MW・サービス', node.data.displayName, middleware.name, 'アプリケーション・ランタイム', 'リポジトリ／イメージ', middleware.repository], ['MW・サービス', node.data.displayName, middleware.name, 'アプリケーション・ランタイム', '設定ファイル', middleware.configurationPath], ['MW・サービス', node.data.displayName, middleware.name, 'MW・サービス', 'バージョン', middleware.version], ['MW・サービス', node.data.displayName, middleware.name, 'MW・サービス', 'ポート', middleware.port], ['MW・サービス', node.data.displayName, middleware.name, 'MW・サービス', '設定メモ', middleware.configurationNote]]),
       ]))
 
@@ -958,7 +1010,7 @@ export default function App() {
           ) : selectedEdge ? (
             <ConnectionEditor edge={selectedEdge} nodes={nodes} onChange={updateConnection} onChangeHandle={updateConnectionHandle} />
           ) : (
-            <div className="empty-state">部品または接続線を選択してください。</div>
+            <SystemPolicyEditor systemPolicy={systemPolicy} onChange={(field, value) => { setSystemPolicy((current) => ({ ...current, [field]: value })); setSaveMessage('') }} />
           )}
         </aside>
       </section>
@@ -986,12 +1038,13 @@ function ScaleView({ server, view, onNavigate, onUpdateServer, onUpdateMiddlewar
   onDeleteMiddleware: (serverId: string, middlewareId: string) => void
 }) {
   const { data } = server
+  const profile = deploymentProfile(data.deploymentType)
   const selectedMiddleware = view.level === 3 || (view.level === 4 && view.middlewareId)
     ? data.middleware.find((item) => item.id === view.middlewareId)
     : undefined
 
   if (view.level === 4) {
-    const serverFields: Array<[EditableField, string]> = [['displayName', '表示名'], ['hostname', 'ホスト名'], ['ipAddress', 'IPアドレス'], ['osName', 'OS名'], ['osVersion', 'OSバージョン'], ['cpu', 'CPU'], ['memory', 'メモリ'], ['disk', 'ディスク'], ['purpose', '用途'], ['notes', '備考']]
+    const serverFields: Array<[EditableField, string]> = [['displayName', '表示名'], ['deploymentType', '配置形態'], ['platformProvider', profile.provider], ['platformLocation', profile.location], ['platformResource', profile.resource], ['platformDetail', profile.detail], ['hostname', 'ホスト名'], ['ipAddress', 'IPアドレス'], ['osName', 'OS名'], ['osVersion', 'OSバージョン'], ['cpu', 'CPU'], ['memory', 'メモリ'], ['disk', 'ディスク'], ['purpose', '用途'], ['notes', '備考']]
     const middlewareFields: Array<[MiddlewareField, string]> = [['name', 'サービス'], ['runtime', '実行言語・ランタイム'], ['framework', 'フレームワーク'], ['executionMethod', '実行方式'], ['repository', 'リポジトリ／イメージ'], ['configurationPath', '設定ファイル'], ['version', 'バージョン'], ['port', 'ポート'], ['configurationNote', '設定メモ']]
     return <section className="scale-screen panel">
       <div className="scale-heading"><div><p className="eyebrow">LEVEL 4</p><h2>設定・パラメータ</h2><p>{selectedMiddleware ? `${selectedMiddleware.name} の設定値` : `${data.displayName} の基本パラメータ`}</p></div><button onClick={() => onNavigate({ level: 2, serverId: server.id })}>詳細図へ戻る</button></div>
@@ -1023,29 +1076,45 @@ function ScaleView({ server, view, onNavigate, onUpdateServer, onUpdateMiddlewar
     <div className="server-diagram categorized-server-diagram">
       <section className="server-boundary">
         <div className="server-shell-heading"><span>サーバー / VM</span><strong>{data.displayName}</strong><small>HW・仮想リソースを表す外枠</small></div>
+        <section className="category-section platform-category">
+          <div className="category-heading"><div><span className="category-kicker">CATEGORY 01</span><h3>配置・実行基盤</h3></div><p>この部品が動作する場所</p></div>
+          <div className="level-two-fields"><label>配置形態<select value={data.deploymentType} onChange={(event) => onUpdateServer(server.id, 'deploymentType', event.target.value)}><option value="">選択してください</option>{deploymentOptions.map((option) => <option value={option} key={option}>{option}</option>)}</select></label><label>{profile.provider}<input value={data.platformProvider} onChange={(event) => onUpdateServer(server.id, 'platformProvider', event.target.value)} placeholder={profile.examples[0]} /></label><label>{profile.location}<input value={data.platformLocation} onChange={(event) => onUpdateServer(server.id, 'platformLocation', event.target.value)} placeholder={profile.examples[1]} /></label><label>{profile.resource}<input value={data.platformResource} onChange={(event) => onUpdateServer(server.id, 'platformResource', event.target.value)} placeholder={profile.examples[2]} /></label><label>{profile.detail}<input value={data.platformDetail} onChange={(event) => onUpdateServer(server.id, 'platformDetail', event.target.value)} placeholder={profile.examples[3]} /></label></div>
+        </section>
         <section className="category-section hardware-category">
-          <div className="category-heading"><div><span className="category-kicker">CATEGORY 01</span><h3>HW・リソース</h3></div><p>CPU・メモリなどの実行基盤</p></div>
+          <div className="category-heading"><div><span className="category-kicker">CATEGORY 02</span><h3>HW・リソース</h3></div><p>CPU・メモリなどの割当リソース</p></div>
           <div className="resource-row"><label><span>CPU</span><input value={data.cpu} onChange={(event) => onUpdateServer(server.id, 'cpu', event.target.value)} /></label><label><span>メモリ</span><input value={data.memory} onChange={(event) => onUpdateServer(server.id, 'memory', event.target.value)} /></label></div>
         </section>
         <section className="category-section os-category">
-          <div className="category-heading"><div><span className="category-kicker">CATEGORY 02</span><h3>OS</h3></div><p>{`${data.osName} ${data.osVersion}`.trim() || '未設定'}</p></div>
+          <div className="category-heading"><div><span className="category-kicker">CATEGORY 03</span><h3>OS</h3></div><p>{`${data.osName} ${data.osVersion}`.trim() || '未設定'}</p></div>
           <div className="level-two-fields"><label>ホスト名<input value={data.hostname} onChange={(event) => onUpdateServer(server.id, 'hostname', event.target.value)} /></label><label>IPアドレス<input value={data.ipAddress} onChange={(event) => onUpdateServer(server.id, 'ipAddress', event.target.value)} /></label><label>OS名<input value={data.osName} onChange={(event) => onUpdateServer(server.id, 'osName', event.target.value)} /></label><label>OSバージョン<input value={data.osVersion} onChange={(event) => onUpdateServer(server.id, 'osVersion', event.target.value)} /></label></div>
         </section>
         <section className="category-section middleware-category">
-          <div className="category-heading"><div><span className="category-kicker">CATEGORY 03</span><h3>MW・アプリケーション</h3></div><p>クリックしてレベル3の詳細へ</p></div>
+          <div className="category-heading"><div><span className="category-kicker">CATEGORY 04</span><h3>MW・アプリケーション</h3></div><p>クリックしてレベル3の詳細へ</p></div>
           <div className="service-row">
             {data.middleware.length ? data.middleware.map((item) => <div className="service-card-wrap" key={item.id}><button className="service-card" onClick={() => onNavigate({ level: 3, serverId: server.id, middlewareId: item.id })}><span>MW・アプリケーション</span><strong>{item.name || '名称未設定'}</strong><small>{item.runtime || 'ランタイム未設定'}</small><small>{[item.framework, item.executionMethod, item.port].filter(Boolean).join(' / ') || '詳細未設定'}</small></button><button className="remove-service" onClick={() => onDeleteMiddleware(server.id, item.id)} aria-label={`${item.name || 'ミドルウェア'}を削除`}>削除</button></div>) : <div className="service-empty">MW・アプリケーション未登録</div>}
             <button className="add-service" onClick={() => onAddMiddleware(server.id)}>＋ サービスを追加</button>
           </div>
         </section>
         <div className="category-bottom-grid">
-          <section className="category-section network-category"><div className="category-heading"><div><span className="category-kicker">CATEGORY 04</span><h3>ネットワーク</h3></div></div><div className="compact-fields"><label>インターフェース<input value="eth0" readOnly /></label><label>管理IP<input value={data.managementIpAddress} onChange={(event) => onUpdateServer(server.id, 'managementIpAddress', event.target.value)} placeholder="未設定" /></label></div></section>
-          <section className="category-section storage-category"><div className="category-heading"><div><span className="category-kicker">CATEGORY 05</span><h3>ストレージ・データ</h3></div></div><div className="compact-fields"><label>ディスク<input value={data.disk} onChange={(event) => onUpdateServer(server.id, 'disk', event.target.value)} /></label><label>用途<input value={data.purpose} onChange={(event) => onUpdateServer(server.id, 'purpose', event.target.value)} /></label></div></section>
+          <section className="category-section network-category"><div className="category-heading"><div><span className="category-kicker">CATEGORY 05</span><h3>ネットワーク</h3></div></div><div className="compact-fields"><label>インターフェース<input value="eth0" readOnly /></label><label>管理IP<input value={data.managementIpAddress} onChange={(event) => onUpdateServer(server.id, 'managementIpAddress', event.target.value)} placeholder="未設定" /></label></div></section>
+          <section className="category-section storage-category"><div className="category-heading"><div><span className="category-kicker">CATEGORY 06</span><h3>ストレージ・データ</h3></div></div><div className="compact-fields"><label>ディスク<input value={data.disk} onChange={(event) => onUpdateServer(server.id, 'disk', event.target.value)} /></label><label>用途<input value={data.purpose} onChange={(event) => onUpdateServer(server.id, 'purpose', event.target.value)} /></label></div></section>
         </div>
       </section>
     </div>
     <button className="primary parameter-button" onClick={() => onNavigate({ level: 4, serverId: server.id })}>サーバーパラメータを表示</button>
   </section>
+}
+
+function SystemPolicyEditor({ systemPolicy, onChange }: { systemPolicy: SystemPolicy; onChange: (field: keyof SystemPolicy, value: string) => void }) {
+  const fields: Array<[keyof SystemPolicy, string, string]> = [
+    ['architecturePolicy', '構成方式', '例: ハイブリッド構成 / クラウド優先'],
+    ['sharedNetwork', '共通ネットワーク', '例: 社内基幹NW / 共通VPC'],
+    ['governance', '管理・運用主体', '例: 情報システム部 / 運用ベンダー'],
+    ['availabilityPolicy', '可用性方針', '例: 重要系は冗長化、その他は単一系'],
+    ['boundaryPolicy', '外部連携・境界方針', '例: FW経由で外部SaaSと連携'],
+    ['notes', '共通メモ', '例: 個別の配置先はレベル2を正とする'],
+  ]
+  return <div className="infrastructure-editor"><p className="property-intro">部品を選択していない時は、システム共通の方針を編集できます。個々のサーバーやクラウドサービスの配置先はレベル2で管理します。</p><div className="kind-badge infrastructure-badge">レベル1 システム共通方針</div>{fields.map(([field, label, placeholder]) => <label key={field}>{label}<input value={systemPolicy[field]} onChange={(event) => onChange(field, event.target.value)} placeholder={placeholder} /></label>)}</div>
 }
 
 function PropertyEditor({ node, nodes, edges, onChange, onSelectConnection, onOpenDetails }: { node: Node<DeviceData>; nodes: Node<DeviceData>[]; edges: Edge<ConnectionData>[]; onChange: (field: EditableField, value: string) => void; onSelectConnection: (edgeId: string) => void; onOpenDetails: () => void }) {
