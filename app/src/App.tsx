@@ -5,7 +5,6 @@ import {
   Background,
   BaseEdge,
   Controls,
-  getSmoothStepPath,
   Handle,
   MiniMap,
   Position,
@@ -25,7 +24,7 @@ import { faBox, faCloud, faDatabase, faHardDrive, faNetworkWired, faRoute, faSer
 
 type DeviceKind = 'server' | 'network' | 'l2-switch' | 'router' | 'firewall' | 'database' | 'storage' | 'cloud' | 'custom'
 type IconKey = 'server' | 'network' | 'router' | 'shield' | 'database' | 'storage' | 'cloud' | 'box'
-type EditableField = 'displayName' | 'hostname' | 'ipAddress' | 'osName' | 'osVersion' | 'cpu' | 'memory' | 'disk' | 'purpose' | 'managementIpAddress' | 'notes' | 'deploymentType' | 'platformProvider' | 'platformLocation' | 'platformResource' | 'platformDetail'
+type EditableField = 'displayName' | 'hostname' | 'ipAddress' | 'osName' | 'osVersion' | 'cpu' | 'memory' | 'disk' | 'purpose' | 'managementIpAddress' | 'notes' | 'deploymentType' | 'platformProvider' | 'platformLocation' | 'platformResource' | 'platformDetail' | 'layoutSlot'
 type Middleware = { id: string; name: string; version: string; port: string; runtime: string; framework: string; executionMethod: string; repository: string; configurationPath: string; configurationNote: string }
 type MiddlewareField = Exclude<keyof Middleware, 'id'>
 type View =
@@ -53,6 +52,7 @@ type DeviceData = {
   platformLocation: string
   platformResource: string
   platformDetail: string
+  layoutSlot: string
   middleware: Middleware[]
   iconKey: IconKey
   color: string
@@ -69,11 +69,13 @@ type SystemPolicy = {
 
 type Selection = { type: 'node'; id: string } | { type: 'edge'; id: string } | null
 type Validation = { severity: 'warning' | 'info'; message: string; nodeIds: string[] }
-type ConnectionData = { connectionType: string; sourceInterface: string; targetInterface: string; notes: string; waypoint?: { x: number; y: number }; manualHandles?: boolean }
-type ConnectionField = Exclude<keyof ConnectionData, 'waypoint' | 'manualHandles'>
-type StoredProject = { schemaVersion: '1.3'; id: string; name: string; systemPolicy: SystemPolicy; nodes: Node<DeviceData>[]; edges: Edge<ConnectionData>[]; updatedAt: string }
-type HistorySnapshot = { projectId: string; projectName: string; systemPolicy: SystemPolicy; nodes: Node<DeviceData>[]; edges: Edge<ConnectionData>[] }
+type ConnectionData = { connectionType: string; sourceInterface: string; targetInterface: string; notes: string; waypoint?: { x: number; y: number }; manualHandles?: boolean; routeOffset?: number; routeAnchorMode?: 'source' | 'target' | 'middle' }
+type ConnectionField = Exclude<keyof ConnectionData, 'waypoint' | 'manualHandles' | 'routeOffset' | 'routeAnchorMode'>
+type StoredProject = { schemaVersion: '1.4'; id: string; name: string; systemPolicy: SystemPolicy; layoutTemplate: LayoutTemplateId; nodes: Node<DeviceData>[]; edges: Edge<ConnectionData>[]; updatedAt: string }
+type HistorySnapshot = { projectId: string; projectName: string; systemPolicy: SystemPolicy; layoutTemplate: LayoutTemplateId; nodes: Node<DeviceData>[]; edges: Edge<ConnectionData>[] }
 type HistoryState = { undo: HistorySnapshot[]; redo: HistorySnapshot[]; current: HistorySnapshot }
+type LayoutTemplateId = 'blank' | 'hierarchy' | 'zone' | 'cloud' | 'hub'
+type LayoutTemplate = { id: LayoutTemplateId; name: string; description: string; preview: Array<{ kind: DeviceKind; x: number; y: number }> }
 
 function historyNodes(nodes: Node<DeviceData>[]) {
   return nodes.map(({ selected: _selected, dragging: _dragging, measured: _measured, className: _className, ...node }) => structuredClone(node)) as Node<DeviceData>[]
@@ -85,6 +87,7 @@ function historyEdges(edges: Edge<ConnectionData>[]) {
 
 const browserStorageKey = 'server-design-gui.projects.v1'
 const emptySystemPolicy = (): SystemPolicy => ({ architecturePolicy: '', sharedNetwork: '', governance: '', availabilityPolicy: '', boundaryPolicy: '', notes: '' })
+const isLayoutTemplateId = (value: unknown): value is LayoutTemplateId => ['blank', 'hierarchy', 'zone', 'cloud', 'hub'].includes(String(value))
 
 function normalizeSystemPolicy(value: Record<string, unknown> | undefined): SystemPolicy {
   if (!value) return emptySystemPolicy()
@@ -197,6 +200,7 @@ function deviceData(kind: DeviceKind, displayName: string, values: Partial<Omit<
     platformLocation: '',
     platformResource: '',
     platformDetail: '',
+    layoutSlot: '',
     iconKey: defaultIcon[kind],
     color: kindColors[kind],
     ...values,
@@ -251,27 +255,228 @@ const initialEdges: Edge<ConnectionData>[] = [
   { id: 'sw-router', source: 'sw01', target: 'router01', sourceHandle: 'source-right', targetHandle: 'target-left', type: 'editable', data: defaultConnectionData() },
 ]
 
+const layoutTemplates: LayoutTemplate[] = [
+  { id: 'hierarchy', name: '階層型', description: 'インターネットから各サーバーへ、上から下へ流れる一般的な構成です。', preview: [{ kind: 'cloud', x: 50, y: 4 }, { kind: 'firewall', x: 50, y: 27 }, { kind: 'router', x: 50, y: 49 }, { kind: 'server', x: 18, y: 75 }, { kind: 'server', x: 50, y: 75 }, { kind: 'database', x: 82, y: 75 }] },
+  { id: 'zone', name: 'ゾーン型', description: 'DMZ・アプリケーション・データベースの境界を意識した構成です。', preview: [{ kind: 'cloud', x: 8, y: 50 }, { kind: 'firewall', x: 29, y: 50 }, { kind: 'server', x: 49, y: 33 }, { kind: 'server', x: 49, y: 67 }, { kind: 'server', x: 69, y: 50 }, { kind: 'database', x: 89, y: 50 }] },
+  { id: 'cloud', name: 'クラウド型', description: 'クラウド、VPC、公開・アプリ・データ層を意識した構成です。', preview: [{ kind: 'cloud', x: 50, y: 8 }, { kind: 'firewall', x: 23, y: 53 }, { kind: 'router', x: 39, y: 53 }, { kind: 'server', x: 62, y: 38 }, { kind: 'database', x: 80, y: 65 }] },
+  { id: 'hub', name: 'ハブ＆スポーク型', description: '共通基盤を中心に、複数システムや拠点をつなぐ構成です。', preview: [{ kind: 'cloud', x: 50, y: 6 }, { kind: 'server', x: 50, y: 51 }, { kind: 'server', x: 15, y: 28 }, { kind: 'server', x: 15, y: 76 }, { kind: 'server', x: 85, y: 28 }, { kind: 'database', x: 85, y: 76 }] },
+  { id: 'blank', name: '空白から開始', description: '部品も接続もない状態から、自由に構成図を作成します。', preview: [] },
+]
+
+function templateNode(id: string, kind: DeviceKind, displayName: string, x: number, y: number, values: Partial<Omit<DeviceData, 'middleware'>> & { middleware?: Partial<Middleware>[] } = {}): Node<DeviceData> {
+  return { id, type: 'device', position: { x, y }, data: deviceData(kind, displayName, values), style: { borderColor: kindColors[kind] } }
+}
+
+function templateEdge(id: string, source: string, target: string): Edge<ConnectionData> {
+  return { id, source, target, sourceHandle: 'source-right', targetHandle: 'target-left', type: 'editable', data: defaultConnectionData() }
+}
+
+function createTemplateDiagram(templateId: LayoutTemplateId) {
+  const id = (name: string) => `${templateId}-${name}-${crypto.randomUUID()}`
+  if (templateId === 'blank') return { nodes: [] as Node<DeviceData>[], edges: [] as Edge<ConnectionData>[] }
+  if (templateId === 'hierarchy') {
+    const internet = id('internet'), firewall = id('firewall'), router = id('router'), web = id('web'), app = id('app'), database = id('database')
+    return {
+      nodes: [templateNode(internet, 'cloud', 'インターネット', 430, 40), templateNode(firewall, 'firewall', 'ファイアウォール', 430, 160), templateNode(router, 'router', 'ルーター', 430, 280), templateNode(web, 'server', 'Webサーバー', 120, 420, { purpose: 'Web層' }), templateNode(app, 'server', 'APサーバー', 430, 420, { purpose: 'アプリケーション層' }), templateNode(database, 'database', 'データベース', 740, 420, { purpose: 'データ層' })],
+      edges: [templateEdge(id('edge'), internet, firewall), templateEdge(id('edge'), firewall, router), templateEdge(id('edge'), router, web), templateEdge(id('edge'), router, app), templateEdge(id('edge'), router, database)],
+    }
+  }
+  if (templateId === 'zone') {
+    const internet = id('internet'), firewall = id('firewall'), web = id('web'), reverseProxy = id('reverse-proxy'), app = id('app'), database = id('database')
+    return {
+      nodes: [templateNode(internet, 'cloud', 'インターネット', 40, 270), templateNode(firewall, 'firewall', 'DMZ ファイアウォール', 240, 270), templateNode(web, 'server', 'DMZ Webサーバー', 440, 150, { purpose: 'DMZゾーン' }), templateNode(reverseProxy, 'server', 'リバースプロキシ', 440, 390, { purpose: 'DMZゾーン' }), templateNode(app, 'server', 'アプリケーションサーバー', 690, 270, { purpose: 'アプリケーションゾーン' }), templateNode(database, 'database', 'データベース', 940, 270, { purpose: 'データベースゾーン' })],
+      edges: [templateEdge(id('edge'), internet, firewall), templateEdge(id('edge'), firewall, web), templateEdge(id('edge'), firewall, reverseProxy), templateEdge(id('edge'), web, app), templateEdge(id('edge'), reverseProxy, app), templateEdge(id('edge'), app, database)],
+    }
+  }
+  if (templateId === 'cloud') {
+    const cloud = id('cloud'), internet = id('internet'), firewall = id('firewall'), router = id('router'), web = id('web'), app = id('app'), database = id('database')
+    return {
+      nodes: [templateNode(cloud, 'cloud', 'クラウド / VPC', 490, 40, { purpose: 'クラウド基盤' }), templateNode(internet, 'cloud', 'インターネット', 50, 300), templateNode(firewall, 'firewall', 'WAF / ファイアウォール', 260, 300, { purpose: 'パブリックサブネット' }), templateNode(router, 'router', 'ルーター / GW', 470, 300, { purpose: 'VPCネットワーク' }), templateNode(web, 'server', 'Webサーバー', 680, 160, { deploymentType: 'クラウドVM', purpose: 'アプリケーションサブネット' }), templateNode(app, 'server', 'APサーバー', 680, 390, { deploymentType: 'クラウドVM', purpose: 'アプリケーションサブネット' }), templateNode(database, 'database', 'マネージドDB', 930, 275, { deploymentType: 'PaaS／SaaS', purpose: 'データベースサブネット' })],
+      edges: [templateEdge(id('edge'), internet, firewall), templateEdge(id('edge'), firewall, router), templateEdge(id('edge'), cloud, router), templateEdge(id('edge'), router, web), templateEdge(id('edge'), router, app), templateEdge(id('edge'), web, database), templateEdge(id('edge'), app, database)],
+    }
+  }
+  const internet = id('internet'), hub = id('hub'), sales = id('sales'), hr = id('hr'), core = id('core'), analytics = id('analytics'), backup = id('backup')
+  return {
+    nodes: [templateNode(internet, 'cloud', 'インターネット', 450, 35), templateNode(hub, 'server', '共通基盤', 450, 300, { purpose: '認証・監視・共通サービス' }), templateNode(sales, 'server', '営業システム', 100, 150), templateNode(hr, 'server', '人事システム', 100, 450), templateNode(core, 'server', '基幹システム', 800, 150), templateNode(analytics, 'database', '分析基盤', 800, 300), templateNode(backup, 'storage', 'バックアップ', 800, 450)],
+    edges: [templateEdge(id('edge'), internet, hub), templateEdge(id('edge'), hub, sales), templateEdge(id('edge'), hub, hr), templateEdge(id('edge'), hub, core), templateEdge(id('edge'), hub, analytics), templateEdge(id('edge'), hub, backup)],
+  }
+}
+
+function defaultLayoutSlot(template: LayoutTemplateId, node: Pick<Node<DeviceData>, 'data'>) {
+  const text = `${node.data.displayName} ${node.data.purpose}`.toLowerCase()
+  if (template === 'zone') {
+    if (node.data.kind === 'cloud' || /インターネット/.test(text)) return 'external'
+    if (node.data.kind === 'firewall') return 'boundary'
+    if (node.data.kind === 'database' || /database|db|データ/.test(text)) return 'data'
+    if (/dmz|リバースプロキシ|web/.test(text)) return /web/.test(text) ? 'dmz-top' : 'dmz-bottom'
+    return 'application'
+  }
+  if (template === 'cloud') {
+    if (node.data.kind === 'cloud' && !/インターネット/.test(text)) return 'cloud'
+    if (node.data.kind === 'cloud' || /インターネット/.test(text)) return 'external'
+    if (node.data.kind === 'firewall') return 'boundary'
+    if (node.data.kind === 'router' || /waf|gateway|gw/.test(text)) return 'gateway'
+    if (node.data.kind === 'database' || /database|db|データ/.test(text)) return 'data'
+    return /web/.test(text) ? 'service-top' : 'service-bottom'
+  }
+  if (template === 'hub') {
+    if (/共通|ハブ|基盤/.test(node.data.displayName)) return 'hub'
+    if (node.data.kind === 'cloud' || /インターネット/.test(text)) return 'top'
+    if (node.data.kind === 'database' || /分析|db|データ/.test(text)) return 'right'
+    return 'spoke'
+  }
+  if (template === 'hierarchy') {
+    if (node.data.kind === 'cloud') return 'entry'
+    if (node.data.kind === 'firewall') return 'boundary'
+    if (node.data.kind === 'router' || node.data.kind === 'network' || node.data.kind === 'l2-switch') return 'network'
+    if (node.data.kind === 'database' || node.data.kind === 'storage') return 'data'
+    return 'service'
+  }
+  return ''
+}
+
+function layoutSlotOptions(template: LayoutTemplateId) {
+  const labels: Record<LayoutTemplateId, Array<[string, string]>> = {
+    blank: [['', '自由配置']],
+    hierarchy: [['entry', '入口'], ['boundary', '境界'], ['network', 'ネットワーク'], ['service', 'サービス'], ['data', 'データ']],
+    zone: [['external', '外部'], ['boundary', '境界'], ['dmz-top', 'DMZ 上段'], ['dmz-bottom', 'DMZ 下段'], ['application', 'アプリケーション'], ['data', 'データベース']],
+    cloud: [['cloud', 'クラウド基盤'], ['external', '外部'], ['boundary', '境界'], ['gateway', 'ゲートウェイ'], ['service-top', 'アプリ上段'], ['service-bottom', 'アプリ下段'], ['data', 'データ']],
+    hub: [['hub', '中心基盤'], ['top', '上部スポーク'], ['right', '右側スポーク'], ['spoke', 'その他スポーク']],
+  }
+  return labels[template]
+}
+
+function arrangeNodesForTemplate(template: LayoutTemplateId, nodes: Node<DeviceData>[], edges: Edge<ConnectionData>[]) {
+  if (template === 'hub') {
+    const degrees = new Map(nodes.map((node) => [node.id, edges.filter((edge) => edge.source === node.id || edge.target === node.id).length]))
+    const hub = nodes.find((node) => /共通|ハブ|基盤/.test(node.data.displayName)) ?? [...nodes].sort((a, b) => (degrees.get(b.id) ?? 0) - (degrees.get(a.id) ?? 0))[0]
+    if (!hub) return nodes
+    const resolvedSlot = (node: Node<DeviceData>) => node.id === hub.id ? 'hub' : (node.data.layoutSlot || defaultLayoutSlot('hub', node)) === 'hub' ? 'spoke' : node.data.layoutSlot || defaultLayoutSlot('hub', node)
+    const remaining = nodes.filter((node) => resolvedSlot(node) === 'spoke').sort((a, b) => a.data.displayName.localeCompare(b.data.displayName, 'ja'))
+    const topNodes = nodes.filter((node) => resolvedSlot(node) === 'top').sort((a, b) => a.data.displayName.localeCompare(b.data.displayName, 'ja'))
+    const rightNodes = nodes.filter((node) => resolvedSlot(node) === 'right').sort((a, b) => a.data.displayName.localeCompare(b.data.displayName, 'ja'))
+    return nodes.map((node) => {
+      const slot = resolvedSlot(node)
+      const data = { ...node.data, layoutSlot: slot }
+      if (slot === 'hub') return { ...node, data, position: { x: 470, y: 300 } }
+      if (slot === 'right') { const index = rightNodes.findIndex((item) => item.id === node.id); return { ...node, data, position: { x: 850, y: 300 + (index - (rightNodes.length - 1) / 2) * 150 } } }
+      if (slot === 'top') { const index = topNodes.findIndex((item) => item.id === node.id); return { ...node, data, position: { x: 470 + (index - (topNodes.length - 1) / 2) * 220, y: 50 } } }
+      const index = remaining.findIndex((item) => item.id === node.id)
+      const slots = [{ x: 70, y: 70 }, { x: 70, y: 250 }, { x: 70, y: 430 }, { x: 70, y: 610 }, { x: 470, y: 650 }, { x: 870, y: 70 }, { x: 870, y: 430 }, { x: 870, y: 610 }]
+      if (index < slots.length) return { ...node, data, position: slots[index] }
+      const ring = Math.floor((index - slots.length) / 8) + 1
+      const ringIndex = (index - slots.length) % 8
+      const angle = (Math.PI * 2 * ringIndex) / 8 + Math.PI / 8
+      return { ...node, data, position: { x: Math.round(470 + Math.cos(angle) * (440 + ring * 180)), y: Math.round(300 + Math.sin(angle) * (300 + ring * 140)) } }
+    })
+  }
+
+  if (template === 'zone') {
+    const resolved = nodes.map((node) => ({ node, slot: node.data.layoutSlot || defaultLayoutSlot('zone', node) }))
+    const groups = new Map<string, Node<DeviceData>[]>()
+    resolved.forEach(({ node, slot }) => groups.set(slot, [...(groups.get(slot) ?? []), node]))
+    return nodes.map((node) => {
+      const slot = node.data.layoutSlot || defaultLayoutSlot('zone', node)
+      const data = { ...node.data, layoutSlot: slot }
+      const positions: Record<string, { x: number; y: number }> = { external: { x: 50, y: 300 }, boundary: { x: 280, y: 300 }, 'dmz-top': { x: 390, y: 145 }, 'dmz-bottom': { x: 390, y: 455 }, application: { x: 590, y: 300 }, data: { x: 860, y: 300 } }
+      const base = positions[slot] ?? positions.application
+      const siblings = (groups.get(slot) ?? []).sort((a, b) => a.data.displayName.localeCompare(b.data.displayName, 'ja'))
+      const index = siblings.findIndex((item) => item.id === node.id)
+      const y = base.y + (siblings.length === 1 ? 0 : (index - (siblings.length - 1) / 2) * 150)
+      return { ...node, data, position: { x: base.x, y } }
+    })
+  }
+
+  if (template === 'cloud') {
+    const resolved = nodes.map((node) => ({ node, slot: node.data.layoutSlot || defaultLayoutSlot('cloud', node) }))
+    const groups = new Map<string, Node<DeviceData>[]>()
+    resolved.forEach(({ node, slot }) => groups.set(slot, [...(groups.get(slot) ?? []), node]))
+    return nodes.map((node) => {
+      const slot = node.data.layoutSlot || defaultLayoutSlot('cloud', node)
+      const data = { ...node.data, layoutSlot: slot }
+      const positions: Record<string, { x: number; y: number }> = { cloud: { x: 470, y: 40 }, external: { x: 50, y: 300 }, boundary: { x: 260, y: 300 }, gateway: { x: 470, y: 300 }, 'service-top': { x: 690, y: 145 }, 'service-bottom': { x: 690, y: 455 }, data: { x: 940, y: 300 } }
+      const base = positions[slot] ?? positions['service-bottom']
+      const siblings = (groups.get(slot) ?? []).sort((a, b) => a.data.displayName.localeCompare(b.data.displayName, 'ja'))
+      const index = siblings.findIndex((item) => item.id === node.id)
+      const y = base.y + (siblings.length === 1 ? 0 : (index - (siblings.length - 1) / 2) * 150)
+      return { ...node, data, position: { x: base.x, y } }
+    })
+  }
+
+  if (template === 'hierarchy') {
+    const columns: Record<string, number> = { entry: 70, boundary: 300, network: 530, service: 760, data: 990 }
+    const groups = new Map<string, Node<DeviceData>[]>()
+    nodes.forEach((node) => {
+      const slot = node.data.layoutSlot || defaultLayoutSlot('hierarchy', node)
+      groups.set(slot, [...(groups.get(slot) ?? []), node])
+    })
+    return nodes.map((node) => {
+      const slot = node.data.layoutSlot || defaultLayoutSlot('hierarchy', node)
+      const siblings = (groups.get(slot) ?? []).sort((a, b) => a.data.displayName.localeCompare(b.data.displayName, 'ja'))
+      const index = siblings.findIndex((item) => item.id === node.id)
+      const y = siblings.length === 1 ? 300 : 175 + index * Math.max(150, 300 / Math.max(siblings.length - 1, 1))
+      return { ...node, data: { ...node.data, layoutSlot: slot }, position: { x: columns[slot] ?? columns.service, y } }
+    })
+  }
+
+  const indegree = new Map(nodes.map((node) => [node.id, 0]))
+  const depth = new Map(nodes.map((node) => [node.id, 0]))
+  edges.forEach((edge) => indegree.set(edge.target, (indegree.get(edge.target) ?? 0) + 1))
+  const queue = nodes.filter((node) => (indegree.get(node.id) ?? 0) === 0).map((node) => node.id)
+  const visited = new Set<string>()
+  while (queue.length) {
+    const sourceId = queue.shift()!
+    if (visited.has(sourceId)) continue
+    visited.add(sourceId)
+    edges.filter((edge) => edge.source === sourceId).forEach((edge) => {
+      depth.set(edge.target, Math.max(depth.get(edge.target) ?? 0, (depth.get(sourceId) ?? 0) + 1))
+      indegree.set(edge.target, (indegree.get(edge.target) ?? 1) - 1)
+      if ((indegree.get(edge.target) ?? 0) <= 0) queue.push(edge.target)
+    })
+  }
+  const lastDepth = Math.max(...depth.values(), 0)
+  nodes.filter((node) => !visited.has(node.id)).forEach((node, index) => depth.set(node.id, lastDepth + index + 1))
+  const layers = new Map<number, Node<DeviceData>[]>()
+  nodes.forEach((node) => { const layer = depth.get(node.id) ?? 0; layers.set(layer, [...(layers.get(layer) ?? []), node]) })
+  return nodes.map((node) => {
+    const layer = depth.get(node.id) ?? 0
+    const siblings = [...(layers.get(layer) ?? [])].sort((a, b) => a.position.y - b.position.y || a.data.displayName.localeCompare(b.data.displayName, 'ja'))
+    return { ...node, position: { x: 100 + layer * 300, y: 110 + siblings.findIndex((item) => item.id === node.id) * 150 } }
+  })
+}
+
 function DeviceNode({ data }: NodeProps) {
   const device = data as DeviceData
   const color = device.color ?? kindColors[device.kind]
   return <div className="device-node" style={{ borderColor: color }}>
-    <Handle id="target-top" className="connection-handle target-handle" type="target" position={Position.Top} style={{ left: '46%' }} aria-label="上側の接続先" />
-    <Handle id="source-top" className="connection-handle source-handle" type="source" position={Position.Top} style={{ left: '54%' }} aria-label="上側の接続元" />
-    <Handle id="target-left" className="connection-handle target-handle" type="target" position={Position.Left} style={{ top: '46%' }} aria-label="左側の接続先" />
-    <Handle id="source-left" className="connection-handle source-handle" type="source" position={Position.Left} style={{ top: '54%' }} aria-label="左側の接続元" />
+    <Handle id="target-top" className="connection-handle target-handle" type="target" position={Position.Top} style={{ left: '50%' }} aria-label="上側の接続先" />
+    <Handle id="source-top" className="connection-handle source-handle" type="source" position={Position.Top} style={{ left: '50%' }} aria-label="上側の接続元" />
+    <Handle id="target-left" className="connection-handle target-handle" type="target" position={Position.Left} style={{ top: '50%' }} aria-label="左側の接続先" />
+    <Handle id="source-left" className="connection-handle source-handle" type="source" position={Position.Left} style={{ top: '50%' }} aria-label="左側の接続元" />
     <FontAwesomeIcon className="node-icon" icon={iconFor(device)} style={{ color }} />
-    <div><small>{kindLabels[device.kind]}</small><strong>{device.displayName}</strong></div>
-    <Handle id="target-right" className="connection-handle target-handle" type="target" position={Position.Right} style={{ top: '46%' }} aria-label="右側の接続先" />
-    <Handle id="source-right" className="connection-handle source-handle" type="source" position={Position.Right} style={{ top: '54%' }} aria-label="右側の接続元" />
-    <Handle id="target-bottom" className="connection-handle target-handle" type="target" position={Position.Bottom} style={{ left: '46%' }} aria-label="下側の接続先" />
-    <Handle id="source-bottom" className="connection-handle source-handle" type="source" position={Position.Bottom} style={{ left: '54%' }} aria-label="下側の接続元" />
+    <div><small title={kindLabels[device.kind]}>{kindLabels[device.kind]}</small><strong title={device.displayName}>{device.displayName}</strong></div>
+    <Handle id="target-right" className="connection-handle target-handle" type="target" position={Position.Right} style={{ top: '50%' }} aria-label="右側の接続先" />
+    <Handle id="source-right" className="connection-handle source-handle" type="source" position={Position.Right} style={{ top: '50%' }} aria-label="右側の接続元" />
+    <Handle id="target-bottom" className="connection-handle target-handle" type="target" position={Position.Bottom} style={{ left: '50%' }} aria-label="下側の接続先" />
+    <Handle id="source-bottom" className="connection-handle source-handle" type="source" position={Position.Bottom} style={{ left: '50%' }} aria-label="下側の接続元" />
   </div>
 }
 
 const nodeTypes = { device: DeviceNode }
 
-function EditableEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, selected, style }: EdgeProps<Edge<ConnectionData>>) {
-  const [edgePath] = getSmoothStepPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition })
+function EditableEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, style }: EdgeProps<Edge<ConnectionData>>) {
+  const sameX = Math.abs(sourceX - targetX) < 8
+  const sameY = Math.abs(sourceY - targetY) < 8
+  const routeOffset = data?.routeOffset ?? 0
+  const horizontalFirst = sourcePosition === Position.Left || sourcePosition === Position.Right || (sourcePosition === Position.Top || sourcePosition === Position.Bottom ? false : Math.abs(sourceX - targetX) >= Math.abs(sourceY - targetY))
+  const routeAnchor = data?.routeAnchorMode
+  const horizontalAnchor = routeAnchor === 'target' ? targetX + (targetPosition === Position.Left ? -52 : 52) : routeAnchor === 'source' ? sourceX + (sourcePosition === Position.Left ? -52 : 52) : (sourceX + targetX) / 2 + routeOffset
+  const verticalAnchor = routeAnchor === 'target' ? targetY + (targetPosition === Position.Top ? -52 : 52) : routeAnchor === 'source' ? sourceY + (sourcePosition === Position.Top ? -52 : 52) : (sourceY + targetY) / 2 + routeOffset
+  const edgePath = sameX || sameY
+    ? `M ${sourceX} ${sourceY} L ${targetX} ${targetY}`
+    : horizontalFirst
+      ? `M ${sourceX} ${sourceY} L ${horizontalAnchor} ${sourceY} L ${horizontalAnchor} ${targetY} L ${targetX} ${targetY}`
+      : `M ${sourceX} ${sourceY} L ${sourceX} ${verticalAnchor} L ${targetX} ${verticalAnchor} L ${targetX} ${targetY}`
   return <BaseEdge id={id} path={edgePath} style={style} interactionWidth={20} />
 }
 
@@ -398,11 +603,13 @@ export default function App() {
   const [selection, setSelection] = useState<Selection>(null)
   const [view, setView] = useState<View>({ level: 1 })
   const [showLayoutEditor, setShowLayoutEditor] = useState(false)
+  const [templatePickerMode, setTemplatePickerMode] = useState<'new' | 'change' | null>(null)
   const [isConnectionMode, setIsConnectionMode] = useState(false)
   const [connectionNodeIds, setConnectionNodeIds] = useState<string[]>([])
   const [projectId, setProjectId] = useState<string>(() => crypto.randomUUID())
   const [projectName, setProjectName] = useState('新しいシステム')
   const [systemPolicy, setSystemPolicy] = useState<SystemPolicy>(() => emptySystemPolicy())
+  const [layoutTemplate, setLayoutTemplate] = useState<LayoutTemplateId>('hierarchy')
   const [historyRevision, setHistoryRevision] = useState(0)
   const [savedProjects, setSavedProjects] = useState<StoredProject[]>(readBrowserProjects)
   const [showProjectLibrary, setShowProjectLibrary] = useState(false)
@@ -412,9 +619,9 @@ export default function App() {
   const [workspaceHeight, setWorkspaceHeight] = useState(544)
   const fileInput = useRef<HTMLInputElement>(null)
   const menuBarRef = useRef<HTMLElement>(null)
-  const flowInstanceRef = useRef<{ screenToFlowPosition: (position: { x: number; y: number }) => { x: number; y: number } } | null>(null)
+  const flowInstanceRef = useRef<{ screenToFlowPosition: (position: { x: number; y: number }) => { x: number; y: number }; fitView: (options?: { padding?: number; duration?: number }) => void } | null>(null)
   const historyRef = useRef<HistoryState | null>(null)
-  const snapshot = (): HistorySnapshot => ({ projectId, projectName, systemPolicy: structuredClone(systemPolicy), nodes: historyNodes(nodes), edges: historyEdges(edges) })
+  const snapshot = (): HistorySnapshot => ({ projectId, projectName, systemPolicy: structuredClone(systemPolicy), layoutTemplate, nodes: historyNodes(nodes), edges: historyEdges(edges) })
   if (!historyRef.current) historyRef.current = { undo: [], redo: [], current: snapshot() }
 
   useEffect(() => {
@@ -444,12 +651,13 @@ export default function App() {
     history.current = next
     history.redo = []
     setHistoryRevision((current) => current + 1)
-  }, [nodes, edges, projectId, projectName, systemPolicy])
+  }, [nodes, edges, projectId, projectName, systemPolicy, layoutTemplate])
 
   const applyHistorySnapshot = (snapshotToApply: HistorySnapshot) => {
     setProjectId(snapshotToApply.projectId)
     setProjectName(snapshotToApply.projectName)
     setSystemPolicy(structuredClone(snapshotToApply.systemPolicy))
+    setLayoutTemplate(snapshotToApply.layoutTemplate)
     setNodes(structuredClone(snapshotToApply.nodes))
     setEdges(structuredClone(snapshotToApply.edges))
     setSelection(null)
@@ -543,6 +751,24 @@ export default function App() {
     '--workspace-height': `${workspaceHeight}px`,
   } as CSSProperties
 
+  const snapNodePosition = (nodeId: string, position: { x: number; y: number }, disableSmartSnap = false) => {
+    const grid = 20
+    let x = Math.round(position.x / grid) * grid
+    let y = Math.round(position.y / grid) * grid
+    if (disableSmartSnap) return { x, y }
+    const nodeWidth = 192
+    const nodeHeight = 74
+    const threshold = 12
+    const centerX = x + nodeWidth / 2
+    const centerY = y + nodeHeight / 2
+    const candidates = nodes.filter((node) => node.id !== nodeId)
+    const closeX = candidates.map((node) => node.position.x + nodeWidth / 2).find((candidate) => Math.abs(candidate - centerX) <= threshold)
+    const closeY = candidates.map((node) => node.position.y + nodeHeight / 2).find((candidate) => Math.abs(candidate - centerY) <= threshold)
+    if (closeX !== undefined) x = closeX - nodeWidth / 2
+    if (closeY !== undefined) y = closeY - nodeHeight / 2
+    return { x, y }
+  }
+
   const runMenuAction = (action: () => void) => () => {
     action()
     setOpenMenu(null)
@@ -594,20 +820,32 @@ export default function App() {
     const name = kindLabels[kind]
     const count = nodes.filter((node) => node.data.kind === kind).length + 1
     const displayName = `${name}${count}`
-    setNodes((current) => [
-      ...current,
-      {
+    setNodes((current) => {
+      const next = [
+        ...current,
+        {
         id,
         type: 'device',
         position: position ?? { x: 220 + ((current.length * 45) % 360), y: 470 + ((current.length * 35) % 120) },
-        data: deviceData(kind, displayName),
+        data: deviceData(kind, displayName, { layoutSlot: layoutTemplate === 'blank' ? '' : defaultLayoutSlot(layoutTemplate, { data: deviceData(kind, displayName) }) }),
         style: { borderColor: kindColors[kind] },
-      },
-    ])
+        },
+      ] as Node<DeviceData>[]
+      return layoutTemplate === 'blank' ? next : arrangeNodesForTemplate(layoutTemplate, next, edges)
+    })
     setSelection({ type: 'node', id })
   }
 
   const updateServer = (serverId: string, field: EditableField, value: string) => {
+    if (field === 'layoutSlot') {
+      const updated = nodes.map((node) => node.id === serverId ? { ...node, data: { ...node.data, layoutSlot: value } } : node)
+      const positioned = arrangeNodesForTemplate(layoutTemplate, updated, edges)
+      setNodes(positioned)
+      optimizeConnections(positioned, true)
+      window.requestAnimationFrame(() => flowInstanceRef.current?.fitView({ padding: .2, duration: 180 }))
+      setSaveMessage('テンプレート上の配置先を変更して再整列しました。')
+      return
+    }
     setNodes((current) => current.map((node) => {
       if (node.id !== serverId) return node
       const data = { ...node.data, [field]: value }
@@ -696,6 +934,7 @@ export default function App() {
 
   const updateConnectionHandle = (edgeId: string, handle: 'sourceHandle' | 'targetHandle', value: string) => {
     setEdges((current) => current.map((edge) => edge.id === edgeId ? { ...edge, [handle]: value, data: { ...defaultConnectionData(), ...edge.data, manualHandles: true, waypoint: undefined } } : edge))
+    window.requestAnimationFrame(() => optimizeConnections())
   }
 
   const updateConnectionEndpoint = (edgeId: string, endpoint: 'source' | 'target', nodeId: string) => {
@@ -707,6 +946,7 @@ export default function App() {
       if (!source || !target) return updated
       return { ...updated, ...chooseConnectionHandles(source, target), data: { ...defaultConnectionData(), ...edge.data, manualHandles: false, waypoint: undefined } }
     }))
+    window.requestAnimationFrame(() => optimizeConnections())
   }
 
   const selectConnection = (edgeId: string) => {
@@ -757,12 +997,14 @@ export default function App() {
       type: 'editable',
       data: defaultConnectionData(),
     }])
+    window.requestAnimationFrame(() => optimizeConnections())
     setConnectionSelection([])
     setSaveMessage(`${source.data.displayName} → ${target.data.displayName} を接続しました。`)
   }
 
   const optimizeConnections = (layoutNodes = nodes, resetManualHandles = false) => {
-    setEdges((current) => current.map((edge) => {
+    setEdges((current) => {
+      const optimized = current.map((edge) => {
       const first = layoutNodes.find((node) => node.id === edge.source)
       const second = layoutNodes.find((node) => node.id === edge.target)
       if (!first || !second) return edge
@@ -777,52 +1019,41 @@ export default function App() {
         type: 'editable',
         data: { ...defaultConnectionData(), ...edge.data, manualHandles: false, waypoint: undefined },
       }
-    }))
+      })
+      const groups = new Map<string, Edge<ConnectionData>[]>()
+      optimized.forEach((edge) => {
+        const sourceGroup = `${edge.source}:${edge.sourceHandle ?? 'source'}`
+        const targetGroup = `${edge.target}:${edge.targetHandle ?? 'target'}`
+        groups.set(sourceGroup, [...(groups.get(sourceGroup) ?? []), edge])
+        groups.set(targetGroup, [...(groups.get(targetGroup) ?? []), edge])
+      })
+      return optimized.map((edge) => {
+        const sourceGroup = groups.get(`${edge.source}:${edge.sourceHandle ?? 'source'}`) ?? []
+        const targetGroup = groups.get(`${edge.target}:${edge.targetHandle ?? 'target'}`) ?? []
+        const group = sourceGroup.length > 1 ? sourceGroup : targetGroup
+        const index = [...group].sort((a, b) => a.id.localeCompare(b.id)).findIndex((item) => item.id === edge.id)
+        const routeAnchorMode = targetGroup.length > 1 ? 'target' : sourceGroup.length > 1 ? 'source' : 'middle'
+        const routeOffset = routeAnchorMode === 'middle' && group.length > 1 ? (index - (group.length - 1) / 2) * 18 : 0
+        return { ...edge, data: { ...defaultConnectionData(), ...edge.data, routeOffset, routeAnchorMode } }
+      })
+    })
   }
 
   const autoArrangeDiagram = () => {
-    const indegree = new Map(nodes.map((node) => [node.id, 0]))
-    const depth = new Map(nodes.map((node) => [node.id, 0]))
-    edges.forEach((edge) => indegree.set(edge.target, (indegree.get(edge.target) ?? 0) + 1))
-    const queue = nodes.filter((node) => (indegree.get(node.id) ?? 0) === 0).map((node) => node.id)
-    const visited = new Set<string>()
-
-    while (queue.length) {
-      const sourceId = queue.shift()!
-      if (visited.has(sourceId)) continue
-      visited.add(sourceId)
-      edges.filter((edge) => edge.source === sourceId).forEach((edge) => {
-        depth.set(edge.target, Math.max(depth.get(edge.target) ?? 0, (depth.get(sourceId) ?? 0) + 1))
-        indegree.set(edge.target, (indegree.get(edge.target) ?? 1) - 1)
-        if ((indegree.get(edge.target) ?? 0) <= 0) queue.push(edge.target)
-      })
-    }
-
-    const lastDepth = Math.max(...depth.values(), 0)
-    nodes.filter((node) => !visited.has(node.id)).forEach((node, index) => depth.set(node.id, lastDepth + index + 1))
-    const layers = new Map<number, Node<DeviceData>[]>()
-    nodes.forEach((node) => {
-      const layer = depth.get(node.id) ?? 0
-      layers.set(layer, [...(layers.get(layer) ?? []), node])
-    })
-    const positioned = nodes.map((node) => {
-      const layer = depth.get(node.id) ?? 0
-      const siblings = [...(layers.get(layer) ?? [])].sort((a, b) => a.position.y - b.position.y || a.data.displayName.localeCompare(b.data.displayName, 'ja'))
-      const index = siblings.findIndex((item) => item.id === node.id)
-      return { ...node, position: { x: 100 + layer * 300, y: 110 + index * 150 } }
-    })
+    const positioned = arrangeNodesForTemplate(layoutTemplate, nodes, edges)
     setNodes(positioned)
     optimizeConnections(positioned, true)
     setConnectionSelection([])
-    setSaveMessage('構成図と接続線を自動整列しました。')
+    window.requestAnimationFrame(() => flowInstanceRef.current?.fitView({ padding: .2, duration: 250 }))
+    setSaveMessage(`「${layoutTemplates.find((item) => item.id === layoutTemplate)?.name}」に合わせて構成図と接続線を自動整列しました。`)
   }
 
   const saveProject = () => {
-    download(`${projectName || 'server-design-project'}.json`, JSON.stringify({ schemaVersion: '1.3', id: projectId, name: projectName, systemPolicy, nodes, edges }, null, 2), 'application/json')
+    download(`${projectName || 'server-design-project'}.json`, JSON.stringify({ schemaVersion: '1.4', id: projectId, name: projectName, systemPolicy, layoutTemplate, nodes, edges }, null, 2), 'application/json')
   }
 
   const saveInBrowser = () => {
-    const project: StoredProject = { schemaVersion: '1.3', id: projectId, name: projectName.trim() || '名称未設定のシステム', systemPolicy, nodes, edges, updatedAt: new Date().toISOString() }
+    const project: StoredProject = { schemaVersion: '1.4', id: projectId, name: projectName.trim() || '名称未設定のシステム', systemPolicy, layoutTemplate, nodes, edges, updatedAt: new Date().toISOString() }
     const updated = [...savedProjects.filter((item) => item.id !== project.id), project].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
     try {
       localStorage.setItem(browserStorageKey, JSON.stringify(updated))
@@ -838,6 +1069,7 @@ export default function App() {
     setProjectId(project.id)
     setProjectName(project.name)
     setSystemPolicy(normalizeSystemPolicy(project.systemPolicy as unknown as Record<string, unknown> | undefined))
+    setLayoutTemplate(isLayoutTemplateId((project as Partial<StoredProject>).layoutTemplate) ? project.layoutTemplate : 'blank')
     setNodes(normalizeNodes(project.nodes))
     setEdges(normalizeEdges(project.edges))
     setSelection(null)
@@ -847,14 +1079,42 @@ export default function App() {
   }
 
   const createNewProject = () => {
+    setTemplatePickerMode('new')
+  }
+
+  const applyTemplate = (templateId: LayoutTemplateId) => {
+    if (templatePickerMode === 'change') {
+      const reclassified = nodes.map((node) => ({ ...node, data: { ...node.data, layoutSlot: '' } }))
+      const positioned = arrangeNodesForTemplate(templateId, reclassified, edges)
+      setLayoutTemplate(templateId)
+      setNodes(positioned)
+      optimizeConnections(positioned, true)
+      setSelection(null)
+      setConnectionSelection([])
+      setTemplatePickerMode(null)
+      window.requestAnimationFrame(() => flowInstanceRef.current?.fitView({ padding: .2, duration: 250 }))
+      setSaveMessage(`部品・接続・入力値を維持したまま、「${layoutTemplates.find((item) => item.id === templateId)?.name}」へレイアウトを変更しました。`)
+      return
+    }
+    const template = createTemplateDiagram(templateId)
+    const positioned = arrangeNodesForTemplate(templateId, template.nodes, template.edges)
+    const optimizedEdges = template.edges.map((edge) => {
+      const source = positioned.find((node) => node.id === edge.source)
+      const target = positioned.find((node) => node.id === edge.target)
+      return source && target ? { ...edge, ...chooseConnectionHandles(source, target) } : edge
+    })
     setProjectId(crypto.randomUUID())
     setProjectName('新しいシステム')
     setSystemPolicy(emptySystemPolicy())
-    setNodes([])
-    setEdges([])
+    setLayoutTemplate(templateId)
+    setNodes(positioned)
+    setEdges(optimizedEdges)
     setSelection(null)
+    setConnectionSelection([])
     setView({ level: 1 })
-    setSaveMessage('新しいシステムセットを作成しました。')
+    setTemplatePickerMode(null)
+    window.requestAnimationFrame(() => flowInstanceRef.current?.fitView({ padding: .2, duration: 250 }))
+    setSaveMessage(`「${layoutTemplates.find((item) => item.id === templateId)?.name}」テンプレートから新しいシステムセットを作成しました。`)
   }
 
   const openProject = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -868,6 +1128,7 @@ export default function App() {
       setProjectId(parsed.id ?? crypto.randomUUID())
       setProjectName(parsed.name ?? (file.name.replace(/\.json$/i, '') || '読み込み済みシステム'))
       setSystemPolicy(normalizeSystemPolicy((parsed.systemPolicy ?? (parsed as unknown as { infrastructure?: Record<string, unknown> }).infrastructure) as Record<string, unknown> | undefined))
+      setLayoutTemplate(isLayoutTemplateId(parsed.layoutTemplate) ? parsed.layoutTemplate : 'blank')
       setSelection(null)
       setView({ level: 1 })
       setSaveMessage(`「${parsed.name ?? file.name}」を読み込みました。`)
@@ -1024,6 +1285,8 @@ export default function App() {
         <div className="menu-group">
           <button className={openMenu === 'layout' ? 'menu-trigger active' : 'menu-trigger'} aria-haspopup="menu" aria-expanded={openMenu === 'layout'} onClick={() => setOpenMenu((current) => current === 'layout' ? null : 'layout')}>レイアウト</button>
           {openMenu === 'layout' && <div className="menu-dropdown" role="menu">
+            <button role="menuitem" disabled={view.level !== 1 || !nodes.length} onClick={runMenuAction(() => setTemplatePickerMode('change'))}>現在の構成のレイアウトを変更</button>
+            <span className="menu-divider" />
             <button role="menuitem" disabled={!selectedNode} onClick={runMenuAction(() => setShowLayoutEditor(true))}>選択中の部品の見た目を編集</button>
             <button role="menuitem" disabled={!selectedNode} onClick={runMenuAction(resetSelectedAppearance)}>アイコン・色を初期値へ戻す</button>
             <span className="menu-divider" />
@@ -1034,6 +1297,19 @@ export default function App() {
       </nav>
 
       {saveMessage && <div className="save-message" role="status">{saveMessage}</div>}
+      {templatePickerMode && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setTemplatePickerMode(null) }}>
+        <section className="template-picker panel" role="dialog" aria-modal="true" aria-label="レイアウトテンプレート" onMouseDown={(event) => event.stopPropagation()}>
+          <div className="panel-heading"><div><h2>{templatePickerMode === 'new' ? '新規作成：レイアウトテンプレート' : '現在の構成：レイアウトを変更'}</h2><p>{templatePickerMode === 'new' ? '部品・接続を含む新しい構成図の出発点を選択します。' : '現在の部品、接続、プロパティは保持し、配置と自動整列のルールだけを変更します。'}</p></div><button onClick={() => setTemplatePickerMode(null)}>閉じる</button></div>
+          <div className="template-grid">{layoutTemplates.map((template) => <article className="template-card" key={template.id}>
+            <div className={`template-preview template-${template.id}`} aria-label={`${template.name}のプレビュー`}>
+              {template.preview.map((item, index) => <span className="template-preview-node" style={{ left: `${item.x}%`, top: `${item.y}%`, color: kindColors[item.kind] }} key={`${item.kind}-${index}`}><FontAwesomeIcon icon={iconDefinitions[defaultIcon[item.kind]]} /></span>)}
+              {template.id === 'blank' && <span className="template-blank-message">自由に配置</span>}
+            </div>
+            <div className="template-card-body"><div><h3>{template.name}</h3><p>{template.description}</p></div><button className="primary" onClick={() => applyTemplate(template.id)}>{templatePickerMode === 'new' ? '新規作成' : 'レイアウト変更'}</button></div>
+          </article>)}</div>
+          <p className="template-note">{templatePickerMode === 'new' ? '現在の構成を置き換えて新しいシステムセットを作成します。必要なら先に「ブラウザに保存」またはJSON書き出しをしてください。' : 'レイアウト変更では、部品や接続を削除しません。テンプレートに合わない部品も、近いカテゴリへ自動配置します。'}</p>
+        </section>
+      </div>}
       {showProjectLibrary && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowProjectLibrary(false) }}>
         <section className="project-library panel" role="dialog" aria-modal="true" aria-label="保存済みシステム" onMouseDown={(event) => event.stopPropagation()}>
           <div className="panel-heading"><div><h2>保存済みシステム</h2><p>ブラウザ内に保存した、レベル1〜4を含むシステムセットです。</p></div><button onClick={() => setShowProjectLibrary(false)}>閉じる</button></div>
@@ -1056,15 +1332,23 @@ export default function App() {
         <div className="panel-resizer" role="separator" aria-label="部品一覧の幅を変更" aria-orientation="vertical" title="ドラッグして部品一覧の幅を変更" onPointerDown={(event) => startPanelResize('palette', event)} />
 
         <section className="canvas panel" aria-label="構成図キャンバス">
-          <div className="canvas-title"><span>全体構成図</span><div className="canvas-actions"><small>{nodes.length} 部品 / {edges.length} 接続</small><button className="auto-layout" onClick={autoArrangeDiagram}>構成図を自動整列</button><button className="auto-layout" onClick={() => { optimizeConnections(nodes, true); setSaveMessage('接続線の支点と経路を自動整列しました。') }}>線を自動整列</button>{connectionNodeIds.length > 0 && <button className={connectionNodeIds.length === 2 ? 'selected-connect active' : 'selected-connect'} disabled={connectionNodeIds.length !== 2} onClick={connectSelectedNodes}>{connectionNodeIds.length === 2 ? '選択した2部品を接続' : `あと${2 - connectionNodeIds.length}部品を選択`}</button>}<button className={isConnectionMode ? 'connection-mode active' : 'connection-mode'} onClick={() => setIsConnectionMode((current) => !current)}>{isConnectionMode ? '接続モード中：支点をドラッグ' : '接続モード'}</button></div></div>
+          <div className="canvas-title"><span>全体構成図 <small className="template-badge">{layoutTemplates.find((item) => item.id === layoutTemplate)?.name}</small></span><div className="canvas-actions"><small title="20pxグリッドと他部品の中心線へ吸着します。Shiftを押す間は中心線への吸着を解除します。">{nodes.length} 部品 / {edges.length} 接続 / 吸着ON</small><button className="auto-layout" onClick={autoArrangeDiagram}>構成図を自動整列</button><button className="auto-layout" onClick={() => { optimizeConnections(nodes, true); setSaveMessage('接続線の支点と経路を自動整列しました。') }}>線を自動整列</button>{connectionNodeIds.length > 0 && <button className={connectionNodeIds.length === 2 ? 'selected-connect active' : 'selected-connect'} disabled={connectionNodeIds.length !== 2} onClick={connectSelectedNodes}>{connectionNodeIds.length === 2 ? '選択した2部品を接続' : `あと${2 - connectionNodeIds.length}部品を選択`}</button>}<button className={isConnectionMode ? 'connection-mode active' : 'connection-mode'} onClick={() => setIsConnectionMode((current) => !current)}>{isConnectionMode ? '接続モード中：支点をドラッグ' : '接続モード'}</button></div></div>
           <div className={isConnectionMode ? 'flow-wrap is-connection-mode' : 'flow-wrap'} onDragOver={allowDeviceDrop} onDrop={dropDevice}>
             <ReactFlow
               nodes={flowNodes}
               edges={flowEdges}
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
-              onNodeDragStop={(_, movedNode) => {
-                const layoutNodes = nodes.map((node) => node.id === movedNode.id ? { ...node, position: movedNode.position, measured: movedNode.measured } : node)
+              snapToGrid
+              snapGrid={[20, 20]}
+              onNodeDrag={(event, movedNode) => {
+                const position = snapNodePosition(movedNode.id, movedNode.position, event.shiftKey)
+                setNodes((current) => current.map((node) => node.id === movedNode.id ? { ...node, position } : node))
+              }}
+              onNodeDragStop={(event, movedNode) => {
+                const position = snapNodePosition(movedNode.id, movedNode.position, event.shiftKey)
+                const layoutNodes = nodes.map((node) => node.id === movedNode.id ? { ...node, position, measured: movedNode.measured } : node)
+                setNodes(layoutNodes)
                 optimizeConnections(layoutNodes)
               }}
               onConnect={(connection: Connection) => setEdges((current) => addEdge({ ...connection, id: crypto.randomUUID(), type: 'editable', data: defaultConnectionData() }, current))}
@@ -1102,7 +1386,7 @@ export default function App() {
         <aside className="properties panel">
           <div className="panel-heading"><h2>プロパティ</h2>{selection && <button className="text-button danger" onClick={deleteSelected}>削除</button>}</div>
           {selectedNode ? (
-            <PropertyEditor node={selectedNode} nodes={nodes} edges={edges} onChange={updateNode} onSelectConnection={selectConnection} onOpenDetails={() => selectedNode.data.kind === 'server' && setView({ level: 2, serverId: selectedNode.id })} />
+            <PropertyEditor node={selectedNode} nodes={nodes} edges={edges} layoutTemplate={layoutTemplate} onChange={updateNode} onSelectConnection={selectConnection} onOpenDetails={() => selectedNode.data.kind === 'server' && setView({ level: 2, serverId: selectedNode.id })} />
           ) : selectedEdge ? (
             <ConnectionEditor edge={selectedEdge} nodes={nodes} onChange={updateConnection} onChangeHandle={updateConnectionHandle} onChangeEndpoint={updateConnectionEndpoint} />
           ) : (
@@ -1213,7 +1497,7 @@ function SystemPolicyEditor({ systemPolicy, onChange }: { systemPolicy: SystemPo
   return <div className="infrastructure-editor"><p className="property-intro">部品を選択していない時は、システム共通の方針を編集できます。個々のサーバーやクラウドサービスの配置先はレベル2で管理します。</p><div className="kind-badge infrastructure-badge">レベル1 システム共通方針</div>{fields.map(([field, label, placeholder]) => <label key={field}>{label}<input value={systemPolicy[field]} onChange={(event) => onChange(field, event.target.value)} placeholder={placeholder} /></label>)}</div>
 }
 
-function PropertyEditor({ node, nodes, edges, onChange, onSelectConnection, onOpenDetails }: { node: Node<DeviceData>; nodes: Node<DeviceData>[]; edges: Edge<ConnectionData>[]; onChange: (field: EditableField, value: string) => void; onSelectConnection: (edgeId: string) => void; onOpenDetails: () => void }) {
+function PropertyEditor({ node, nodes, edges, layoutTemplate, onChange, onSelectConnection, onOpenDetails }: { node: Node<DeviceData>; nodes: Node<DeviceData>[]; edges: Edge<ConnectionData>[]; layoutTemplate: LayoutTemplateId; onChange: (field: EditableField, value: string) => void; onSelectConnection: (edgeId: string) => void; onOpenDetails: () => void }) {
   const { data } = node
   const fields: Array<[EditableField, string]> = data.kind === 'server'
     ? [['displayName', '表示名'], ['hostname', 'ホスト名'], ['ipAddress', 'IPアドレス'], ['osName', 'OS名'], ['osVersion', 'OSバージョン'], ['cpu', 'CPU'], ['memory', 'メモリ'], ['disk', 'ディスク'], ['purpose', '用途']]
@@ -1222,6 +1506,7 @@ function PropertyEditor({ node, nodes, edges, onChange, onSelectConnection, onOp
   const connectedName = (edge: Edge<ConnectionData>) => nodes.find((item) => item.id === (edge.source === node.id ? edge.target : edge.source))?.data.displayName ?? '削除済み部品'
   return <div className="property-form">
     <div className="kind-badge" style={{ color: kindColors[data.kind], borderColor: kindColors[data.kind] }}>{kindLabels[data.kind]}</div>
+    {layoutTemplate !== 'blank' && <label>テンプレート上の配置先<select value={data.layoutSlot || defaultLayoutSlot(layoutTemplate, node)} onChange={(event) => onChange('layoutSlot', event.target.value)}>{layoutSlotOptions(layoutTemplate).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>}
     {fields.map(([field, label]) => <label key={field}>{label}<input value={data[field]} onChange={(event) => onChange(field, event.target.value)} /></label>)}
     <label>備考<textarea value={data.notes} onChange={(event) => onChange('notes', event.target.value)} rows={3} /></label>
     {data.kind === 'server' && <button type="button" className="detail-button" onClick={onOpenDetails}>詳細・ミドルウェアを編集</button>}
