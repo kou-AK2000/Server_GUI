@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
 import {
   addEdge,
@@ -24,8 +24,8 @@ import { faBox, faCloud, faDatabase, faHardDrive, faNetworkWired, faRoute, faSer
 
 type DeviceKind = 'server' | 'network' | 'l2-switch' | 'router' | 'firewall' | 'database' | 'storage' | 'cloud' | 'custom'
 type IconKey = 'server' | 'network' | 'router' | 'shield' | 'database' | 'storage' | 'cloud' | 'box'
-type EditableField = 'displayName' | 'hostname' | 'ipAddress' | 'osName' | 'osVersion' | 'cpu' | 'memory' | 'disk' | 'purpose' | 'managementIpAddress' | 'notes' | 'deploymentType' | 'platformProvider' | 'platformLocation' | 'platformResource' | 'platformDetail' | 'layoutSlot'
-type Middleware = { id: string; name: string; version: string; port: string; runtime: string; framework: string; executionMethod: string; repository: string; configurationPath: string; configurationNote: string }
+type EditableField = 'displayName' | 'hostname' | 'ipAddress' | 'osName' | 'osVersion' | 'cpu' | 'memory' | 'disk' | 'purpose' | 'managementIpAddress' | 'notes' | 'deploymentType' | 'platformProvider' | 'platformLocation' | 'platformResource' | 'platformDetail' | 'layoutSlot' | 'level2Note' | 'level4Note'
+type Middleware = { id: string; name: string; version: string; port: string; runtime: string; framework: string; executionMethod: string; repository: string; configurationPath: string; configurationNote: string; level3Note: string }
 type MiddlewareField = Exclude<keyof Middleware, 'id'>
 type View =
   | { level: 1 }
@@ -53,6 +53,8 @@ type DeviceData = {
   platformResource: string
   platformDetail: string
   layoutSlot: string
+  level2Note: string
+  level4Note: string
   middleware: Middleware[]
   iconKey: IconKey
   color: string
@@ -65,12 +67,13 @@ type SystemPolicy = {
   availabilityPolicy: string
   boundaryPolicy: string
   notes: string
+  designNote: string
 }
 
 type Selection = { type: 'node'; id: string } | { type: 'edge'; id: string } | null
 type Validation = { severity: 'warning' | 'info'; message: string; nodeIds: string[] }
-type ConnectionData = { connectionType: string; sourceInterface: string; targetInterface: string; notes: string; waypoint?: { x: number; y: number }; manualHandles?: boolean; routeOffset?: number; routeAnchorMode?: 'source' | 'target' | 'middle' }
-type ConnectionField = Exclude<keyof ConnectionData, 'waypoint' | 'manualHandles' | 'routeOffset' | 'routeAnchorMode'>
+type ConnectionData = { connectionType: string; sourceInterface: string; targetInterface: string; notes: string; waypoint?: { x: number; y: number }; manualHandles?: boolean; routeOffset?: number; routeAnchorMode?: 'source' | 'target' | 'middle'; manualRoute?: { x: number; y: number } }
+type ConnectionField = Exclude<keyof ConnectionData, 'waypoint' | 'manualHandles' | 'routeOffset' | 'routeAnchorMode' | 'manualRoute'>
 type StoredProject = { schemaVersion: '1.4'; id: string; name: string; systemPolicy: SystemPolicy; layoutTemplate: LayoutTemplateId; nodes: Node<DeviceData>[]; edges: Edge<ConnectionData>[]; updatedAt: string }
 type HistorySnapshot = { projectId: string; projectName: string; systemPolicy: SystemPolicy; layoutTemplate: LayoutTemplateId; nodes: Node<DeviceData>[]; edges: Edge<ConnectionData>[] }
 type HistoryState = { undo: HistorySnapshot[]; redo: HistorySnapshot[]; current: HistorySnapshot }
@@ -86,7 +89,7 @@ function historyEdges(edges: Edge<ConnectionData>[]) {
 }
 
 const browserStorageKey = 'server-design-gui.projects.v1'
-const emptySystemPolicy = (): SystemPolicy => ({ architecturePolicy: '', sharedNetwork: '', governance: '', availabilityPolicy: '', boundaryPolicy: '', notes: '' })
+const emptySystemPolicy = (): SystemPolicy => ({ architecturePolicy: '', sharedNetwork: '', governance: '', availabilityPolicy: '', boundaryPolicy: '', notes: '', designNote: '' })
 const isLayoutTemplateId = (value: unknown): value is LayoutTemplateId => ['blank', 'hierarchy', 'zone', 'cloud', 'hub'].includes(String(value))
 
 function normalizeSystemPolicy(value: Record<string, unknown> | undefined): SystemPolicy {
@@ -98,6 +101,7 @@ function normalizeSystemPolicy(value: Record<string, unknown> | undefined): Syst
     availabilityPolicy: typeof value.availabilityPolicy === 'string' ? value.availabilityPolicy : '',
     boundaryPolicy: typeof value.boundaryPolicy === 'string' ? value.boundaryPolicy : typeof value.provider === 'string' ? value.provider : '',
     notes: typeof value.notes === 'string' ? value.notes : typeof value.regionOrSite === 'string' ? value.regionOrSite : '',
+    designNote: typeof value.designNote === 'string' ? value.designNote : '',
   }
 }
 
@@ -177,7 +181,7 @@ function iconFor(data: Pick<DeviceData, 'kind'> & Partial<Pick<DeviceData, 'icon
 }
 
 function middlewareData(values: Partial<Middleware> = {}): Middleware {
-  return { id: values.id ?? crypto.randomUUID(), name: '', version: '', port: '', runtime: '', framework: '', executionMethod: '', repository: '', configurationPath: '', configurationNote: '', ...values }
+  return { id: values.id ?? crypto.randomUUID(), name: '', version: '', port: '', runtime: '', framework: '', executionMethod: '', repository: '', configurationPath: '', configurationNote: '', level3Note: '', ...values }
 }
 
 function deviceData(kind: DeviceKind, displayName: string, values: Partial<Omit<DeviceData, 'middleware'>> & { middleware?: Partial<Middleware>[] } = {}): DeviceData {
@@ -201,6 +205,8 @@ function deviceData(kind: DeviceKind, displayName: string, values: Partial<Omit<
     platformResource: '',
     platformDetail: '',
     layoutSlot: '',
+    level2Note: '',
+    level4Note: '',
     iconKey: defaultIcon[kind],
     color: kindColors[kind],
     ...values,
@@ -464,20 +470,72 @@ function DeviceNode({ data }: NodeProps) {
 
 const nodeTypes = { device: DeviceNode }
 
-function EditableEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, style }: EdgeProps<Edge<ConnectionData>>) {
+const EdgeRouteContext = createContext<{
+  updateManualRoute: (edgeId: string, axis: 'x' | 'y', value: number, initialRoute: { x: number; y: number }) => void
+  updateEndpointAtPoint: (edgeId: string, endpoint: 'source' | 'target', clientX: number, clientY: number) => void
+} | null>(null)
+
+function EditableEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, selected, style }: EdgeProps<Edge<ConnectionData>>) {
+  const routeContext = useContext(EdgeRouteContext)
   const sameX = Math.abs(sourceX - targetX) < 8
   const sameY = Math.abs(sourceY - targetY) < 8
   const routeOffset = data?.routeOffset ?? 0
   const horizontalFirst = sourcePosition === Position.Left || sourcePosition === Position.Right || (sourcePosition === Position.Top || sourcePosition === Position.Bottom ? false : Math.abs(sourceX - targetX) >= Math.abs(sourceY - targetY))
+  const sourceIsHorizontal = sourcePosition === Position.Left || sourcePosition === Position.Right
   const routeAnchor = data?.routeAnchorMode
   const horizontalAnchor = routeAnchor === 'target' ? targetX + (targetPosition === Position.Left ? -52 : 52) : routeAnchor === 'source' ? sourceX + (sourcePosition === Position.Left ? -52 : 52) : (sourceX + targetX) / 2 + routeOffset
   const verticalAnchor = routeAnchor === 'target' ? targetY + (targetPosition === Position.Top ? -52 : 52) : routeAnchor === 'source' ? sourceY + (sourcePosition === Position.Top ? -52 : 52) : (sourceY + targetY) / 2 + routeOffset
+  const manualRoute = data?.manualRoute
+  // 手動調整を始める際も、まず現在の自動経路と同じ形を引き継ぐ。
+  // これにより最初のドラッグで線全体が中央へ跳ねることを防ぐ。
+  const automaticRoute = sameX
+    ? { x: sourceX, y: targetY }
+    : sameY
+      ? { x: targetX, y: sourceY }
+      : horizontalFirst
+        ? { x: horizontalAnchor, y: targetY }
+        : { x: targetX, y: verticalAnchor }
+  const route = manualRoute ?? automaticRoute
+  // 同一のX軸またはY軸に並ぶ部品同士は、過去の手動経路が残っていても常に直線とする。
   const edgePath = sameX || sameY
     ? `M ${sourceX} ${sourceY} L ${targetX} ${targetY}`
+    : manualRoute
+      // 左右の中央支点からは横へ、上下の中央支点からは縦へ、必ず直線で出す。
+      // 手動で折れ位置を動かしても、支点の直後に逆方向の短い線を作らない。
+      ? sourceIsHorizontal
+        ? `M ${sourceX} ${sourceY} L ${route.x} ${sourceY} L ${route.x} ${route.y} L ${targetX} ${route.y} L ${targetX} ${targetY}`
+        : `M ${sourceX} ${sourceY} L ${sourceX} ${route.y} L ${route.x} ${route.y} L ${route.x} ${targetY} L ${targetX} ${targetY}`
     : horizontalFirst
       ? `M ${sourceX} ${sourceY} L ${horizontalAnchor} ${sourceY} L ${horizontalAnchor} ${targetY} L ${targetX} ${targetY}`
       : `M ${sourceX} ${sourceY} L ${sourceX} ${verticalAnchor} L ${targetX} ${verticalAnchor} L ${targetX} ${targetY}`
-  return <BaseEdge id={id} path={edgePath} style={style} interactionWidth={20} />
+  const startRouteDrag = (axis: 'x' | 'y', event: ReactPointerEvent<SVGPathElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const initialValue = route[axis]
+    const start = axis === 'x' ? event.clientX : event.clientY
+    const zoom = event.currentTarget.getScreenCTM()?.a ?? 1
+    const onMove = (moveEvent: PointerEvent) => routeContext?.updateManualRoute(id, axis, initialValue + (axis === 'x' ? moveEvent.clientX - start : moveEvent.clientY - start) / zoom, route)
+    const onUp = () => { window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp) }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+  const startEndpointDrag = (endpoint: 'source' | 'target', event: ReactPointerEvent<SVGCircleElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const onUp = (upEvent: PointerEvent) => {
+      routeContext?.updateEndpointAtPoint(id, endpoint, upEvent.clientX, upEvent.clientY)
+      window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointerup', onUp)
+  }
+  return <><BaseEdge id={id} path={edgePath} style={style} interactionWidth={20} />
+    {selected && routeContext && <>
+      <path className="edge-route-drag-surface edge-route-drag-y" d={sourceIsHorizontal ? `M ${route.x} ${route.y} L ${targetX} ${route.y}` : `M ${sourceX} ${route.y} L ${route.x} ${route.y}`} onPointerDown={(event) => startRouteDrag('y', event)}><title>上下へドラッグして横線を移動</title></path>
+      <path className="edge-route-drag-surface edge-route-drag-x" d={sourceIsHorizontal ? `M ${route.x} ${sourceY} L ${route.x} ${route.y}` : `M ${route.x} ${route.y} L ${route.x} ${targetY}`} onPointerDown={(event) => startRouteDrag('x', event)}><title>左右へドラッグして縦線を移動</title></path>
+      <circle className="edge-endpoint-marker edge-endpoint-source" cx={sourceX} cy={sourceY} r={7} onPointerDown={(event) => startEndpointDrag('source', event)}><title>始点を部品の中央支点へドラッグして接続先を変更</title></circle>
+      <circle className="edge-endpoint-marker edge-endpoint-target" cx={targetX} cy={targetY} r={7} onPointerDown={(event) => startEndpointDrag('target', event)}><title>終点を部品の中央支点へドラッグして接続先を変更</title></circle>
+    </>}
+  </>
 }
 
 const edgeTypes = { editable: EditableEdge }
@@ -605,6 +663,7 @@ export default function App() {
   const [showLayoutEditor, setShowLayoutEditor] = useState(false)
   const [templatePickerMode, setTemplatePickerMode] = useState<'new' | 'change' | null>(null)
   const [isConnectionMode, setIsConnectionMode] = useState(false)
+  const [showDesignNotes, setShowDesignNotes] = useState(false)
   const [connectionNodeIds, setConnectionNodeIds] = useState<string[]>([])
   const [projectId, setProjectId] = useState<string>(() => crypto.randomUUID())
   const [projectName, setProjectName] = useState('新しいシステム')
@@ -632,6 +691,12 @@ export default function App() {
     window.addEventListener('pointerdown', closeMenuOnOutsideClick)
     return () => window.removeEventListener('pointerdown', closeMenuOnOutsideClick)
   }, [openMenu])
+
+  useEffect(() => {
+    if (!saveMessage) return
+    const timer = window.setTimeout(() => setSaveMessage(''), 4000)
+    return () => window.clearTimeout(timer)
+  }, [saveMessage])
 
   useEffect(() => {
     if (!showProjectLibrary) return
@@ -932,6 +997,44 @@ export default function App() {
     } : edge))
   }
 
+  const updateManualRoute = (edgeId: string, axis: 'x' | 'y', value: number, initialRoute: { x: number; y: number }) => {
+    setEdges((current) => current.map((edge) => {
+      if (edge.id !== edgeId) return edge
+      const route = edge.data?.manualRoute ?? initialRoute
+      return { ...edge, data: { ...defaultConnectionData(), ...edge.data, manualRoute: { ...route, [axis]: Math.round(value / 20) * 20 } } }
+    }))
+  }
+
+  const updateEndpointAtPoint = (edgeId: string, endpoint: 'source' | 'target', clientX: number, clientY: number) => {
+    const point = flowInstanceRef.current?.screenToFlowPosition({ x: clientX, y: clientY })
+    if (!point) return
+    const candidates = nodes.flatMap((node) => {
+      const width = node.measured?.width ?? 192
+      const height = node.measured?.height ?? 74
+      return [
+        { nodeId: node.id, side: 'top', x: node.position.x + width / 2, y: node.position.y },
+        { nodeId: node.id, side: 'right', x: node.position.x + width, y: node.position.y + height / 2 },
+        { nodeId: node.id, side: 'bottom', x: node.position.x + width / 2, y: node.position.y + height },
+        { nodeId: node.id, side: 'left', x: node.position.x, y: node.position.y + height / 2 },
+      ]
+    })
+    const nearest = candidates.map((candidate) => ({ ...candidate, distance: Math.hypot(candidate.x - point.x, candidate.y - point.y) })).sort((first, second) => first.distance - second.distance)[0]
+    if (!nearest || nearest.distance > 72) {
+      setSaveMessage('部品の上下左右にある中央支点へドロップしてください。')
+      return
+    }
+    setEdges((current) => current.map((edge) => {
+      if (edge.id !== edgeId || (endpoint === 'source' ? edge.target : edge.source) === nearest.nodeId) return edge
+      return {
+        ...edge,
+        [endpoint]: nearest.nodeId,
+        [endpoint === 'source' ? 'sourceHandle' : 'targetHandle']: `${endpoint}-${nearest.side}`,
+        data: { ...defaultConnectionData(), ...edge.data, manualHandles: true, waypoint: undefined, manualRoute: undefined },
+      }
+    }))
+    setSaveMessage(`${endpoint === 'source' ? '始点' : '終点'}を部品の${nearest.side === 'top' ? '上' : nearest.side === 'right' ? '右' : nearest.side === 'bottom' ? '下' : '左'}中央へ接続しました。`)
+  }
+
   const updateConnectionHandle = (edgeId: string, handle: 'sourceHandle' | 'targetHandle', value: string) => {
     setEdges((current) => current.map((edge) => edge.id === edgeId ? { ...edge, [handle]: value, data: { ...defaultConnectionData(), ...edge.data, manualHandles: true, waypoint: undefined } } : edge))
     window.requestAnimationFrame(() => optimizeConnections())
@@ -1017,7 +1120,7 @@ export default function App() {
         target: target.id,
         ...chooseConnectionHandles(source, target),
         type: 'editable',
-        data: { ...defaultConnectionData(), ...edge.data, manualHandles: false, waypoint: undefined },
+        data: { ...defaultConnectionData(), ...edge.data, manualHandles: false, waypoint: undefined, manualRoute: resetManualHandles ? undefined : edge.data?.manualRoute },
       }
       })
       const groups = new Map<string, Edge<ConnectionData>[]>()
@@ -1194,7 +1297,7 @@ export default function App() {
       const level1ImageId = workbook.addImage({ base64: await svgToPng(level1Image.svg, level1Image.width, level1Image.height), extension: 'png' })
       level1.addImage(level1ImageId, { tl: { col: 1, row: 2 }, ext: { width: 760, height: Math.round(760 * level1Image.height / level1Image.width) } })
       let level1Row = 4 + Math.ceil((760 * level1Image.height / level1Image.width) / 20)
-      level1Row = addTable(level1, level1Row, 'システム共通方針', ['構成方式', '共通ネットワーク', '管理・運用主体', '可用性方針', '外部連携・境界方針', '共通メモ'], [[systemPolicy.architecturePolicy, systemPolicy.sharedNetwork, systemPolicy.governance, systemPolicy.availabilityPolicy, systemPolicy.boundaryPolicy, systemPolicy.notes]]) + 2
+      level1Row = addTable(level1, level1Row, 'システム共通方針', ['構成方式', '共通ネットワーク', '管理・運用主体', '可用性方針', '外部連携・境界方針', '共通メモ', '設計メモ'], [[systemPolicy.architecturePolicy, systemPolicy.sharedNetwork, systemPolicy.governance, systemPolicy.availabilityPolicy, systemPolicy.boundaryPolicy, systemPolicy.notes, systemPolicy.designNote]]) + 2
       level1Row = addTable(level1, level1Row, '部品一覧', ['部品ID', '種別', '表示名', 'ホスト名', 'IPアドレス', '管理IPアドレス', '用途', '備考'], nodes.map((node) => [node.id, kindLabels[node.data.kind], node.data.displayName, node.data.hostname, node.data.ipAddress, node.data.managementIpAddress, node.data.purpose, node.data.notes])) + 2
       addTable(level1, level1Row, '接続一覧', ['接続ID', '接続元', '接続先', '接続種別', '接続元IF', '接続先IF', '備考'], edges.map((edge) => [edge.id, nodes.find((node) => node.id === edge.source)?.data.displayName ?? edge.source, nodes.find((node) => node.id === edge.target)?.data.displayName ?? edge.target, edge.data?.connectionType ?? 'network', edge.data?.sourceInterface ?? '', edge.data?.targetInterface ?? '', edge.data?.notes ?? '']))
 
@@ -1207,11 +1310,11 @@ export default function App() {
         level2.addImage(imageId, { tl: { col: 1, row: level2Row }, ext: { width: 760, height: Math.round(760 * image.height / image.width) } })
         level2Row += Math.ceil((760 * image.height / image.width) / 20) + 3
       }
-      addTable(level2, level2Row, 'サーバー詳細一覧', ['サーバー名', '配置形態', 'クラウド／仮想化基盤', '配置先', 'リソース・クラスタ', '補足情報', 'HW・リソース: CPU', 'HW・リソース: メモリ', 'OS名', 'OSバージョン', 'ホスト名', 'IPアドレス', '管理IPアドレス', 'ストレージ: ディスク', '用途', '備考'], servers.map((node) => [node.data.displayName, node.data.deploymentType, node.data.platformProvider, node.data.platformLocation, node.data.platformResource, node.data.platformDetail, node.data.cpu, node.data.memory, node.data.osName, node.data.osVersion, node.data.hostname, node.data.ipAddress, node.data.managementIpAddress, node.data.disk, node.data.purpose, node.data.notes]))
+      addTable(level2, level2Row, 'サーバー詳細一覧', ['サーバー名', '配置形態', 'クラウド／仮想化基盤', '配置先', 'リソース・クラスタ', '補足情報', 'HW・リソース: CPU', 'HW・リソース: メモリ', 'OS名', 'OSバージョン', 'ホスト名', 'IPアドレス', '管理IPアドレス', 'ストレージ: ディスク', '用途', '備考', '設計メモ'], servers.map((node) => [node.data.displayName, node.data.deploymentType, node.data.platformProvider, node.data.platformLocation, node.data.platformResource, node.data.platformDetail, node.data.cpu, node.data.memory, node.data.osName, node.data.osVersion, node.data.hostname, node.data.ipAddress, node.data.managementIpAddress, node.data.disk, node.data.purpose, node.data.notes, node.data.level2Note]))
 
       const level3 = workbook.addWorksheet('レベル3_MWサービス')
       setupSheet(level3, 'レベル3 MW・サービス詳細', [20, 18, 22, 22, 20, 18, 16, 16, 32, 32, 40])
-      addTable(level3, 4, 'MW・サービス一覧', ['サーバー名', 'ホスト名', 'サービス名', '実行言語・ランタイム', 'フレームワーク', '実行方式', 'バージョン', 'ポート', 'リポジトリ／イメージ', '設定ファイル', '設定メモ'], servers.flatMap((node) => node.data.middleware.map((middleware) => [node.data.displayName, node.data.hostname, middleware.name, middleware.runtime, middleware.framework, middleware.executionMethod, middleware.version, middleware.port, middleware.repository, middleware.configurationPath, middleware.configurationNote])))
+      addTable(level3, 4, 'MW・サービス一覧', ['サーバー名', 'ホスト名', 'サービス名', '実行言語・ランタイム', 'フレームワーク', '実行方式', 'バージョン', 'ポート', 'リポジトリ／イメージ', '設定ファイル', '設定メモ', '設計メモ'], servers.flatMap((node) => node.data.middleware.map((middleware) => [node.data.displayName, node.data.hostname, middleware.name, middleware.runtime, middleware.framework, middleware.executionMethod, middleware.version, middleware.port, middleware.repository, middleware.configurationPath, middleware.configurationNote, middleware.level3Note])))
 
       const level4 = workbook.addWorksheet('レベル4_設定パラメータ')
       setupSheet(level4, 'レベル4 設定・パラメータ', [16, 20, 22, 20, 20, 42])
@@ -1268,9 +1371,6 @@ export default function App() {
             <button role="menuitem" disabled={!historyRef.current?.redo.length} onClick={runMenuAction(redo)}>やり直す <span className="shortcut">⌘⇧Z / Ctrl+Y</span></button>
             <span className="menu-divider" />
             <button role="menuitem" disabled={!selection} onClick={runMenuAction(deleteSelected)}>選択中の部品・接続を削除</button>
-            <span className="menu-divider" />
-            <button role="menuitem" disabled={view.level !== 1} onClick={runMenuAction(autoArrangeDiagram)}>構成図を自動整列</button>
-            <button role="menuitem" disabled={view.level !== 1} onClick={runMenuAction(() => { optimizeConnections(nodes, true); setSaveMessage('接続線の支点と経路を自動整列しました。') })}>線を自動整列</button>
           </div>}
         </div>
         <div className="menu-group">
@@ -1278,6 +1378,7 @@ export default function App() {
           {openMenu === 'view' && <div className="menu-dropdown" role="menu">
             <button role="menuitem" onClick={runMenuAction(() => setView({ level: 1 }))}>レベル1 全体構成図</button>
             <button role="menuitem" disabled={view.level !== 1} onClick={runMenuAction(() => setIsConnectionMode((current) => !current))}>{isConnectionMode ? '接続モードを終了' : '接続モードを開始'}</button>
+            <button role="menuitem" onClick={runMenuAction(() => setShowDesignNotes((current) => !current))}>{showDesignNotes ? '設計メモを隠す' : '設計メモを表示'}</button>
             <span className="menu-divider" />
             <button role="menuitem" disabled={view.level !== 1} onClick={runMenuAction(() => { setPanelWidths({ palette: 200, properties: 272 }); setWorkspaceHeight(544); setSaveMessage('表示領域のサイズを初期値に戻しました。') })}>表示領域のサイズを戻す</button>
           </div>}
@@ -1286,11 +1387,11 @@ export default function App() {
           <button className={openMenu === 'layout' ? 'menu-trigger active' : 'menu-trigger'} aria-haspopup="menu" aria-expanded={openMenu === 'layout'} onClick={() => setOpenMenu((current) => current === 'layout' ? null : 'layout')}>レイアウト</button>
           {openMenu === 'layout' && <div className="menu-dropdown" role="menu">
             <button role="menuitem" disabled={view.level !== 1 || !nodes.length} onClick={runMenuAction(() => setTemplatePickerMode('change'))}>現在の構成のレイアウトを変更</button>
+            <button role="menuitem" disabled={view.level !== 1 || !nodes.length} onClick={runMenuAction(autoArrangeDiagram)}>テンプレート基準に再配置</button>
+            <button role="menuitem" disabled={view.level !== 1 || !edges.length} onClick={runMenuAction(() => { optimizeConnections(nodes, true); setSaveMessage('接続線を最適化しました。') })}>接続線を最適化</button>
             <span className="menu-divider" />
             <button role="menuitem" disabled={!selectedNode} onClick={runMenuAction(() => setShowLayoutEditor(true))}>選択中の部品の見た目を編集</button>
             <button role="menuitem" disabled={!selectedNode} onClick={runMenuAction(resetSelectedAppearance)}>アイコン・色を初期値へ戻す</button>
-            <span className="menu-divider" />
-            <button role="menuitem" disabled={view.level !== 1} onClick={runMenuAction(autoArrangeDiagram)}>構成図を自動整列</button>
           </div>}
         </div>
         <input ref={fileInput} className="hidden" type="file" accept="application/json,.json" onChange={openProject} />
@@ -1332,8 +1433,9 @@ export default function App() {
         <div className="panel-resizer" role="separator" aria-label="部品一覧の幅を変更" aria-orientation="vertical" title="ドラッグして部品一覧の幅を変更" onPointerDown={(event) => startPanelResize('palette', event)} />
 
         <section className="canvas panel" aria-label="構成図キャンバス">
-          <div className="canvas-title"><span>全体構成図 <small className="template-badge">{layoutTemplates.find((item) => item.id === layoutTemplate)?.name}</small></span><div className="canvas-actions"><small title="20pxグリッドと他部品の中心線へ吸着します。Shiftを押す間は中心線への吸着を解除します。">{nodes.length} 部品 / {edges.length} 接続 / 吸着ON</small><button className="auto-layout" onClick={autoArrangeDiagram}>構成図を自動整列</button><button className="auto-layout" onClick={() => { optimizeConnections(nodes, true); setSaveMessage('接続線の支点と経路を自動整列しました。') }}>線を自動整列</button>{connectionNodeIds.length > 0 && <button className={connectionNodeIds.length === 2 ? 'selected-connect active' : 'selected-connect'} disabled={connectionNodeIds.length !== 2} onClick={connectSelectedNodes}>{connectionNodeIds.length === 2 ? '選択した2部品を接続' : `あと${2 - connectionNodeIds.length}部品を選択`}</button>}<button className={isConnectionMode ? 'connection-mode active' : 'connection-mode'} onClick={() => setIsConnectionMode((current) => !current)}>{isConnectionMode ? '接続モード中：支点をドラッグ' : '接続モード'}</button></div></div>
+          <div className="canvas-title"><span>全体構成図 <small className="template-badge">{layoutTemplates.find((item) => item.id === layoutTemplate)?.name}</small></span><div className="canvas-actions"><small title="20pxグリッドと他部品の中心線へ吸着します。Shiftを押す間は中心線への吸着を解除します。">{nodes.length} 部品 / {edges.length} 接続 / 吸着ON</small>{connectionNodeIds.length > 0 && <button className={connectionNodeIds.length === 2 ? 'selected-connect active' : 'selected-connect'} disabled={connectionNodeIds.length !== 2} onClick={connectSelectedNodes}>{connectionNodeIds.length === 2 ? '選択した2部品を接続' : `あと${2 - connectionNodeIds.length}部品を選択`}</button>}<button className={isConnectionMode ? 'connection-mode active' : 'connection-mode'} onClick={() => setIsConnectionMode((current) => !current)}>{isConnectionMode ? '接続モード中：支点をドラッグ' : '接続モード'}</button></div></div>
           <div className={isConnectionMode ? 'flow-wrap is-connection-mode' : 'flow-wrap'} onDragOver={allowDeviceDrop} onDrop={dropDevice}>
+            <EdgeRouteContext.Provider value={{ updateManualRoute, updateEndpointAtPoint }}>
             <ReactFlow
               nodes={flowNodes}
               edges={flowEdges}
@@ -1378,6 +1480,7 @@ export default function App() {
               <Controls />
               <MiniMap nodeColor={(node) => (node.data as DeviceData).color ?? kindColors[(node.data as DeviceData).kind]} zoomable pannable />
             </ReactFlow>
+            </EdgeRouteContext.Provider>
           </div>
         </section>
 
@@ -1397,20 +1500,23 @@ export default function App() {
 
       <div className="workspace-height-resizer" role="separator" aria-label="作業エリアの高さを変更" aria-orientation="horizontal" title="ドラッグして作業エリアの高さを変更" onPointerDown={startWorkspaceHeightResize}><span /></div>
 
+      {showDesignNotes && <DesignNotePanel level="レベル1" description="システム全体の方針、判断理由、顧客・営業へ共有したい背景を残します。" value={systemPolicy.designNote} onChange={(value) => setSystemPolicy((current) => ({ ...current, designNote: value }))} />}
+
       <section className="checks panel">
         <div className="panel-heading">
           <div><h2>チェック結果</h2><p>警告 {validations.filter((item) => item.severity === 'warning').length}件 / 情報 {validations.filter((item) => item.severity === 'info').length}件</p></div>
         </div>
         {validations.length ? <ul>{validations.map((item, index) => <li key={`${item.message}-${index}`} className={item.severity} onClick={() => setSelection({ type: 'node', id: item.nodeIds[0] })}><span>{item.severity === 'warning' ? '警告' : '情報'}</span>{item.message}</li>)}</ul> : <div className="check-success">現在の構成にMVP対象の警告はありません。</div>}
       </section>
-      </> : viewServer ? <ScaleView server={viewServer} view={view} onNavigate={setView} onUpdateServer={updateServer} onUpdateMiddleware={updateMiddleware} onAddMiddleware={addMiddleware} onDeleteMiddleware={deleteMiddleware} /> : <section className="scale-screen panel"><h2>対象のサーバーが見つかりません。</h2><button onClick={() => setView({ level: 1 })}>全体構成図へ戻る</button></section>}
+      </> : viewServer ? <ScaleView server={viewServer} view={view} showDesignNotes={showDesignNotes} onNavigate={setView} onUpdateServer={updateServer} onUpdateMiddleware={updateMiddleware} onAddMiddleware={addMiddleware} onDeleteMiddleware={deleteMiddleware} /> : <section className="scale-screen panel"><h2>対象のサーバーが見つかりません。</h2><button onClick={() => setView({ level: 1 })}>全体構成図へ戻る</button></section>}
     </main>
   )
 }
 
-function ScaleView({ server, view, onNavigate, onUpdateServer, onUpdateMiddleware, onAddMiddleware, onDeleteMiddleware }: {
+function ScaleView({ server, view, showDesignNotes, onNavigate, onUpdateServer, onUpdateMiddleware, onAddMiddleware, onDeleteMiddleware }: {
   server: Node<DeviceData>
   view: Exclude<View, { level: 1 }>
+  showDesignNotes: boolean
   onNavigate: (view: View) => void
   onUpdateServer: (serverId: string, field: EditableField, value: string) => void
   onUpdateMiddleware: (serverId: string, middlewareId: string, field: MiddlewareField, value: string) => void
@@ -1428,6 +1534,7 @@ function ScaleView({ server, view, onNavigate, onUpdateServer, onUpdateMiddlewar
     const middlewareFields: Array<[MiddlewareField, string]> = [['name', 'サービス'], ['runtime', '実行言語・ランタイム'], ['framework', 'フレームワーク'], ['executionMethod', '実行方式'], ['repository', 'リポジトリ／イメージ'], ['configurationPath', '設定ファイル'], ['version', 'バージョン'], ['port', 'ポート'], ['configurationNote', '設定メモ']]
     return <section className="scale-screen panel">
       <div className="scale-heading"><div><p className="eyebrow">LEVEL 4</p><h2>設定・パラメータ</h2><p>{selectedMiddleware ? `${selectedMiddleware.name} の設定値` : `${data.displayName} の基本パラメータ`}</p></div><button onClick={() => onNavigate({ level: 2, serverId: server.id })}>詳細図へ戻る</button></div>
+      {showDesignNotes && <DesignNotePanel level="レベル4" description="設定値の意図、変更時の注意、未確定事項を残します。" value={data.level4Note} onChange={(value) => onUpdateServer(server.id, 'level4Note', value)} />}
       <p className="edit-hint">ここで編集した値は、全体構成図・詳細図・一覧・出力へ同時に反映されます。</p>
       <table className="parameter-table"><tbody>{selectedMiddleware ? middlewareFields.map(([field, label]) => <tr key={field}><th>{label}</th><td>{field === 'configurationNote' ? <textarea value={selectedMiddleware[field]} onChange={(event) => onUpdateMiddleware(server.id, selectedMiddleware.id, field, event.target.value)} rows={3} /> : <input value={selectedMiddleware[field]} onChange={(event) => onUpdateMiddleware(server.id, selectedMiddleware.id, field, event.target.value)} />}</td></tr>) : serverFields.map(([field, label]) => <tr key={field}><th>{label}</th><td>{field === 'notes' ? <textarea value={data[field]} onChange={(event) => onUpdateServer(server.id, field, event.target.value)} rows={3} /> : <input value={data[field]} onChange={(event) => onUpdateServer(server.id, field, event.target.value)} />}</td></tr>)}</tbody></table>
     </section>
@@ -1436,6 +1543,7 @@ function ScaleView({ server, view, onNavigate, onUpdateServer, onUpdateMiddlewar
   if (view.level === 3 && selectedMiddleware) {
     return <section className="scale-screen panel">
       <div className="scale-heading"><div><p className="eyebrow">LEVEL 3</p><h2>{selectedMiddleware.name} サービス詳細</h2><p>{data.displayName} / {data.hostname}</p></div><button onClick={() => onNavigate({ level: 2, serverId: server.id })}>サーバー詳細図へ戻る</button></div>
+      {showDesignNotes && <DesignNotePanel level="レベル3" description="サービス構成の理由、運用上の注意、依存関係を残します。" value={selectedMiddleware.level3Note} onChange={(value) => onUpdateMiddleware(server.id, selectedMiddleware.id, 'level3Note', value)} />}
       <div className="service-detail-grid">
         <label>サービス名<input value={selectedMiddleware.name} onChange={(event) => onUpdateMiddleware(server.id, selectedMiddleware.id, 'name', event.target.value)} /></label>
         <label>実行言語・ランタイム<input value={selectedMiddleware.runtime} onChange={(event) => onUpdateMiddleware(server.id, selectedMiddleware.id, 'runtime', event.target.value)} placeholder="例: Java 21 / Node.js 22" /></label>
@@ -1453,6 +1561,7 @@ function ScaleView({ server, view, onNavigate, onUpdateServer, onUpdateMiddlewar
 
   return <section className="scale-screen panel">
     <div className="scale-heading"><div><p className="eyebrow">LEVEL 2</p><h2>{data.displayName} 詳細図</h2><p>{data.hostname || 'ホスト名未設定'} / {data.ipAddress || 'IP未設定'}</p></div><button onClick={() => onNavigate({ level: 1 })}>全体構成図へ戻る</button></div>
+    {showDesignNotes && <DesignNotePanel level="レベル2" description="サーバー・クラウド配置・構成の判断理由や注意点を残します。" value={data.level2Note} onChange={(value) => onUpdateServer(server.id, 'level2Note', value)} />}
     <div className="server-diagram categorized-server-diagram">
       <section className="server-boundary">
         <div className="server-shell-heading"><span>サーバー / VM</span><strong>{data.displayName}</strong><small>HW・仮想リソースを表す外枠</small></div>
@@ -1483,6 +1592,10 @@ function ScaleView({ server, view, onNavigate, onUpdateServer, onUpdateMiddlewar
     </div>
     <button className="primary parameter-button" onClick={() => onNavigate({ level: 4, serverId: server.id })}>サーバーパラメータを表示</button>
   </section>
+}
+
+function DesignNotePanel({ level, description, value, onChange }: { level: string; description: string; value: string; onChange: (value: string) => void }) {
+  return <section className="design-note-panel" aria-label={`${level}の設計メモ`}><div><span>DESIGN NOTE / {level}</span><strong>設計メモ</strong><p>{description}</p></div><textarea value={value} onChange={(event) => onChange(event.target.value)} rows={4} placeholder="例: この構成を選んだ理由、共有したい前提、検討中の事項を記載します。" /></section>
 }
 
 function SystemPolicyEditor({ systemPolicy, onChange }: { systemPolicy: SystemPolicy; onChange: (field: keyof SystemPolicy, value: string) => void }) {
@@ -1520,7 +1633,7 @@ function ConnectionEditor({ edge, nodes, onChange, onChangeHandle, onChangeEndpo
   const targetName = nodes.find((node) => node.id === edge.target)?.data.displayName ?? edge.target
   return <div className="edge-details connection-editor">
     <strong>{sourceName} → {targetName}</strong>
-    <p>線の経路は自動で最適化されます。ここでは接続する部品と、上下左右の接続支点を変更できます。</p>
+    <p>選択中の線は、線そのものを直接ドラッグして調整できます。横線は上下、縦線は左右へ20pxグリッドに吸着します。ここでは接続する部品と、上下左右の接続支点を変更できます。</p>
     <label>接続元の部品<select value={edge.source} onChange={(event) => onChangeEndpoint(edge.id, 'source', event.target.value)}>{nodes.map((node) => <option key={node.id} value={node.id}>{node.data.displayName}</option>)}</select></label>
     <label>接続元の支点<select value={edge.sourceHandle ?? 'source-right'} onChange={(event) => onChangeHandle(edge.id, 'sourceHandle', event.target.value)}><option value="source-top">上</option><option value="source-right">右</option><option value="source-bottom">下</option><option value="source-left">左</option></select></label>
     <label>接続先の部品<select value={edge.target} onChange={(event) => onChangeEndpoint(edge.id, 'target', event.target.value)}>{nodes.map((node) => <option key={node.id} value={node.id}>{node.data.displayName}</option>)}</select></label>
