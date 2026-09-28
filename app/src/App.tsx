@@ -29,7 +29,7 @@ type RuntimeItem = { id: string; name: string; version: string }
 type NetworkInterface = { id: string; name: string; purpose: string; ipAddress: string; subnet: string; gateway: string }
 type SelinuxServiceSetting = { id: string; serviceId: string; category: string; target: string; desiredValue: string; status: string; verificationCommand: string; notes: string }
 type AppArmorRule = { id: string; serviceId: string; category: string; target: string; permission: string; status: string; verificationCommand: string; notes: string }
-type Middleware = { id: string; name: string; version: string; port: string; runtime: string; runtimes: RuntimeItem[]; framework: string; executionMethod: string; repository: string; configurationPath: string; configurationNote: string; level3Note: string }
+type Middleware = { id: string; category: string; name: string; version: string; port: string; runtime: string; runtimes: RuntimeItem[]; framework: string; executionMethod: string; repository: string; configurationPath: string; configurationNote: string; level3Note: string }
 type MiddlewareField = Exclude<keyof Middleware, 'id' | 'runtimes'>
 type View =
   | { level: 1 }
@@ -167,6 +167,7 @@ const deploymentOptions = ['物理サーバー（オンプレ）', '仮想マシ
 const osFamilyOptions = ['Linux', 'Windows', 'Unix', 'その他'] as const
 const linuxSecurityToolOptions = ['使用しない', 'SELinux', 'AppArmor', 'その他'] as const
 const linuxSecurityStateOptions = ['有効', '無効', '検討中'] as const
+const middlewareCategoryOptions = ['Webサーバー／リバースプロキシ', 'APサーバー／Webアプリケーション', 'API／バックエンドサービス', 'バッチ／スケジューラ／ジョブ', 'DB', 'キャッシュ／セッションストア', 'メッセージング／イベント連携', '検索エンジン', 'ファイル転送／ファイル処理', '認証／認可／ID管理', '監視／ログ収集／APM', 'ETL／データ連携', '帳票／メール／通知', '運用支援ツール', '開発・CI/CD関連', 'その他'] as const
 const cpuUnitOptions = ['vCPU', 'core'] as const
 const capacityUnitOptions = ['MB', 'GB', 'TB'] as const
 
@@ -308,7 +309,7 @@ function appArmorRuleData(values: Partial<AppArmorRule> = {}): AppArmorRule {
 
 function middlewareData(values: Partial<Middleware> = {}): Middleware {
   const runtimes = (values.runtimes ?? runtimeFromLegacy(values.runtime ?? '')).map((item) => runtimeItemData(item))
-  return { ...values, id: values.id ?? crypto.randomUUID(), name: values.name ?? '', version: values.version ?? '', port: values.port ?? '', framework: values.framework ?? '', executionMethod: values.executionMethod ?? '', repository: values.repository ?? '', configurationPath: values.configurationPath ?? '', configurationNote: values.configurationNote ?? '', level3Note: values.level3Note ?? '', runtimes, runtime: runtimeLabel(runtimes, values.runtime ?? '') }
+  return { ...values, id: values.id ?? crypto.randomUUID(), category: values.category ?? '', name: values.name ?? '', version: values.version ?? '', port: values.port ?? '', framework: values.framework ?? '', executionMethod: values.executionMethod ?? '', repository: values.repository ?? '', configurationPath: values.configurationPath ?? '', configurationNote: values.configurationNote ?? '', level3Note: values.level3Note ?? '', runtimes, runtime: runtimeLabel(runtimes, values.runtime ?? '') }
 }
 
 function deviceData(kind: DeviceKind, displayName: string, values: Partial<Omit<DeviceData, 'middleware'>> & { middleware?: Partial<Middleware>[] } = {}): DeviceData {
@@ -1610,7 +1611,7 @@ export default function App() {
 
       const level3 = workbook.addWorksheet('レベル3_MWサービス')
       setupSheet(level3, 'レベル3 MW・サービス詳細', [20, 18, 22, 22, 20, 18, 16, 16, 32, 32, 40])
-      addTable(level3, 4, 'MW・サービス一覧', ['サーバー名', 'ホスト名', 'サービス名', '実行環境', 'ランタイムバージョン', 'フレームワーク', '実行方式', 'サービスバージョン', 'ポート', 'リポジトリ／イメージ', '設定ファイル', '設定メモ', '設計メモ'], servers.flatMap((node) => node.data.middleware.flatMap((middleware) => (middleware.runtimes.length ? middleware.runtimes : [{ name: middleware.runtime, version: '' }]).map((runtime) => [node.data.displayName, node.data.hostname, middleware.name, runtime.name, runtime.version, middleware.framework, middleware.executionMethod, middleware.version, middleware.port, middleware.repository, middleware.configurationPath, middleware.configurationNote, middleware.level3Note]))))
+      addTable(level3, 4, 'MW・サービス一覧', ['サーバー名', 'ホスト名', '用途分類', 'サービス名', '実行環境', 'ランタイムバージョン', 'フレームワーク', '実行方式', 'サービスバージョン', 'ポート', 'リポジトリ／イメージ', '設定ファイル', '設定メモ', '設計メモ'], servers.flatMap((node) => node.data.middleware.flatMap((middleware) => (middleware.runtimes.length ? middleware.runtimes : [{ name: middleware.runtime, version: '' }]).map((runtime) => [node.data.displayName, node.data.hostname, middleware.category, middleware.name, runtime.name, runtime.version, middleware.framework, middleware.executionMethod, middleware.version, middleware.port, middleware.repository, middleware.configurationPath, middleware.configurationNote, middleware.level3Note]))))
 
       const level4 = workbook.addWorksheet('レベル4_設定パラメータ')
       setupSheet(level4, 'レベル4 設定・パラメータ', [16, 20, 22, 20, 20, 42])
@@ -1857,7 +1858,7 @@ function ScaleView({ server, view, showDesignNotes, onNavigate, onUpdateServer, 
       monitoring: [['monitoringMethod', '監視・ログ方法'], ['logRetention', 'ログ保存期間']],
     }
     const serverFields = view.section ? sectionFields[view.section] : allServerFields
-    const middlewareFields: Array<[MiddlewareField, string]> = [['name', 'サービス'], ['framework', 'フレームワーク'], ['executionMethod', '実行方式'], ['repository', 'リポジトリ／イメージ'], ['configurationPath', '設定ファイル'], ['version', 'バージョン'], ['port', 'ポート'], ['configurationNote', '設定メモ']]
+    const middlewareFields: Array<[MiddlewareField, string]> = [['category', '用途分類'], ['name', 'サービス'], ['framework', 'フレームワーク'], ['executionMethod', '実行方式'], ['repository', 'リポジトリ／イメージ'], ['configurationPath', '設定ファイル'], ['version', 'バージョン'], ['port', 'ポート'], ['configurationNote', '設定メモ']]
     return <section className="scale-screen panel">
       <div className="scale-heading"><div><p className="eyebrow">LEVEL 4</p><h2>設定・パラメータ</h2><p>{selectedMiddleware ? `${selectedMiddleware.name} の設定値` : view.section ? `${data.displayName} / ${sectionLabels[view.section]} の詳細` : `${data.displayName} の基本パラメータ`}</p></div><button onClick={() => onNavigate(selectedMiddleware ? { level: 3, serverId: server.id, middlewareId: selectedMiddleware.id } : { level: 2, serverId: server.id })}>{selectedMiddleware ? 'サービス詳細へ戻る' : '詳細図へ戻る'}</button></div>
       {showDesignNotes && <DesignNotePanel level="レベル4" description="設定値の意図、変更時の注意、未確定事項を残します。" value={data.level4Note} onChange={(value) => onUpdateServer(server.id, 'level4Note', value)} />}
@@ -1878,7 +1879,7 @@ function ScaleView({ server, view, showDesignNotes, onNavigate, onUpdateServer, 
       <div className="scale-heading"><div><p className="eyebrow">LEVEL 3</p><h2>{selectedMiddleware.name} サービス詳細</h2><p>{data.displayName} / {data.hostname}</p></div><button onClick={() => onNavigate({ level: 2, serverId: server.id })}>サーバー詳細図へ戻る</button></div>
       {showDesignNotes && <DesignNotePanel level="レベル3" description="サービス構成の理由、運用上の注意、依存関係を残します。" value={selectedMiddleware.level3Note} onChange={(value) => onUpdateMiddleware(server.id, selectedMiddleware.id, 'level3Note', value)} />}
       <div className="service-detail-grid">
-        <label>サービス名<input value={selectedMiddleware.name} onChange={(event) => onUpdateMiddleware(server.id, selectedMiddleware.id, 'name', event.target.value)} /></label>
+        <section className="service-name-category-field"><label>サービス名<input value={selectedMiddleware.name} onChange={(event) => onUpdateMiddleware(server.id, selectedMiddleware.id, 'name', event.target.value)} /></label><label>用途分類<select value={selectedMiddleware.category} onChange={(event) => onUpdateMiddleware(server.id, selectedMiddleware.id, 'category', event.target.value)}><option value="">選択してください</option>{middlewareCategoryOptions.map((option) => <option key={option} value={option}>{option}</option>)}</select></label></section>
         <label>サービスバージョン<input value={selectedMiddleware.version} onChange={(event) => onUpdateMiddleware(server.id, selectedMiddleware.id, 'version', event.target.value)} placeholder="例: 1.24" /></label>
         <section className="runtime-editor"><div><span>実行言語・ランタイム</span><small>名称とバージョンを1組ずつ登録します</small></div>{selectedMiddleware.runtimes.map((runtime) => <div className="runtime-item" key={runtime.id}><input value={runtime.name} onChange={(event) => onUpdateRuntime(server.id, selectedMiddleware.id, runtime.id, 'name', event.target.value)} placeholder="例: Java" aria-label="実行環境名" /><input value={runtime.version} onChange={(event) => onUpdateRuntime(server.id, selectedMiddleware.id, runtime.id, 'version', event.target.value)} placeholder="例: 21" aria-label="実行環境のバージョン" /><button type="button" className="text-button danger" onClick={() => onDeleteRuntime(server.id, selectedMiddleware.id, runtime.id)} aria-label={`${runtime.name || '実行環境'}を削除`}>削除</button></div>)}<button type="button" className="add-runtime" onClick={() => onAddRuntime(server.id, selectedMiddleware.id)}>＋ 実行環境を追加</button></section>
         <label>フレームワーク<input value={selectedMiddleware.framework} onChange={(event) => onUpdateMiddleware(server.id, selectedMiddleware.id, 'framework', event.target.value)} placeholder="例: Spring Boot" /></label>
@@ -1919,7 +1920,7 @@ function ScaleView({ server, view, showDesignNotes, onNavigate, onUpdateServer, 
         <section className="category-section middleware-category">
           <div className="category-heading"><div><span className="category-kicker">CATEGORY 04</span><h3>MW・アプリケーション</h3></div><p>クリックしてレベル3の詳細へ</p></div>
           <div className="service-row">
-            {data.middleware.length ? data.middleware.map((item) => <div className="service-card-wrap" key={item.id}><button className="service-card" onClick={() => onNavigate({ level: 3, serverId: server.id, middlewareId: item.id })}><span>MW・アプリケーション</span><strong>{item.name || '名称未設定'}</strong><small>{item.version ? `バージョン: ${item.version}` : 'バージョン未設定'}</small></button><button className="remove-service" onClick={() => onDeleteMiddleware(server.id, item.id)} aria-label={`${item.name || 'ミドルウェア'}を削除`}>削除</button></div>) : <div className="service-empty">MW・アプリケーション未登録</div>}
+            {data.middleware.length ? data.middleware.map((item) => <div className="service-card-wrap" key={item.id}><button className="service-card" onClick={() => onNavigate({ level: 3, serverId: server.id, middlewareId: item.id })}><span>{item.category || 'MW・アプリケーション'}</span><strong>{item.name || '名称未設定'}</strong><small>{item.version ? `バージョン: ${item.version}` : 'バージョン未設定'}</small></button><button className="remove-service" onClick={() => onDeleteMiddleware(server.id, item.id)} aria-label={`${item.name || 'ミドルウェア'}を削除`}>削除</button></div>) : <div className="service-empty">MW・アプリケーション未登録</div>}
             <button className="add-service" onClick={() => onAddMiddleware(server.id)}>＋ サービスを追加</button>
           </div>
         </section>
