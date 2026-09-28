@@ -24,8 +24,10 @@ import { faBox, faCloud, faDatabase, faHardDrive, faNetworkWired, faRoute, faSer
 
 type DeviceKind = 'server' | 'network' | 'l2-switch' | 'router' | 'firewall' | 'database' | 'storage' | 'cloud' | 'custom'
 type IconKey = 'server' | 'network' | 'router' | 'shield' | 'database' | 'storage' | 'cloud' | 'box'
-type EditableField = 'displayName' | 'hostname' | 'ipAddress' | 'osName' | 'osVersion' | 'cpu' | 'cpuValue' | 'cpuUnit' | 'memory' | 'memoryValue' | 'memoryUnit' | 'disk' | 'diskValue' | 'diskUnit' | 'purpose' | 'managementIpAddress' | 'notes' | 'deploymentType' | 'platformProvider' | 'platformLocation' | 'platformResource' | 'platformDetail' | 'dbUsage' | 'dbType' | 'dbVersion' | 'backupMethod' | 'backupSchedule' | 'backupRetention' | 'backupDestination' | 'recoveryTarget' | 'restoreTest' | 'monitoringMethod' | 'logRetention' | 'layoutSlot' | 'level2Note' | 'level4Note'
+type EditableField = 'displayName' | 'hostname' | 'ipAddress' | 'osFamily' | 'osName' | 'osVersion' | 'linuxDistribution' | 'linuxKernelVersion' | 'linuxInitSystem' | 'linuxPackageManager' | 'linuxFileSystem' | 'linuxSecurityModule' | 'linuxSecurityTool' | 'linuxSecurityState' | 'selinuxMode' | 'selinuxPolicy' | 'selinuxRules' | 'selinuxExceptions' | 'selinuxAuditLog' | 'selinuxBootStatus' | 'selinuxManagementTools' | 'selinuxAuditd' | 'selinuxPermissiveDomains' | 'selinuxCustomPolicy' | 'selinuxUserRole' | 'appArmorMode' | 'appArmorProfilePolicy' | 'appArmorProfiles' | 'appArmorExceptions' | 'appArmorLog' | 'linuxLogging' | 'cpu' | 'cpuValue' | 'cpuUnit' | 'memory' | 'memoryValue' | 'memoryUnit' | 'disk' | 'diskValue' | 'diskUnit' | 'purpose' | 'managementIpAddress' | 'notes' | 'deploymentType' | 'platformProvider' | 'platformLocation' | 'platformResource' | 'platformDetail' | 'dbUsage' | 'dbType' | 'dbVersion' | 'backupMethod' | 'backupSchedule' | 'backupRetention' | 'backupDestination' | 'recoveryTarget' | 'restoreTest' | 'monitoringMethod' | 'logRetention' | 'layoutSlot' | 'level2Note' | 'level4Note'
 type RuntimeItem = { id: string; name: string; version: string }
+type NetworkInterface = { id: string; name: string; purpose: string; ipAddress: string; subnet: string; gateway: string }
+type SelinuxServiceSetting = { id: string; serviceId: string; category: string; target: string; desiredValue: string; status: string; verificationCommand: string; notes: string }
 type Middleware = { id: string; name: string; version: string; port: string; runtime: string; runtimes: RuntimeItem[]; framework: string; executionMethod: string; repository: string; configurationPath: string; configurationNote: string; level3Note: string }
 type MiddlewareField = Exclude<keyof Middleware, 'id' | 'runtimes'>
 type View =
@@ -41,9 +43,38 @@ type DeviceData = {
   kind: DeviceKind
   displayName: string
   hostname: string
+  hostnameAliases: string[]
   ipAddress: string
+  networkInterfaces: NetworkInterface[]
+  osFamily: string
   osName: string
   osVersion: string
+  linuxDistribution: string
+  linuxKernelVersion: string
+  linuxInitSystem: string
+  linuxPackageManager: string
+  linuxFileSystem: string
+  linuxSecurityModule: string
+  linuxSecurityTool: string
+  linuxSecurityState: string
+  selinuxMode: string
+  selinuxPolicy: string
+  selinuxRules: string
+  selinuxExceptions: string
+  selinuxAuditLog: string
+  selinuxBootStatus: string
+  selinuxManagementTools: string
+  selinuxAuditd: string
+  selinuxPermissiveDomains: string
+  selinuxCustomPolicy: string
+  selinuxUserRole: string
+  selinuxServiceSettings: SelinuxServiceSetting[]
+  appArmorMode: string
+  appArmorProfilePolicy: string
+  appArmorProfiles: string
+  appArmorExceptions: string
+  appArmorLog: string
+  linuxLogging: string
   cpu: string
   cpuValue: string
   cpuUnit: string
@@ -126,6 +157,9 @@ function normalizeSystemPolicy(value: Record<string, unknown> | undefined): Syst
 }
 
 const deploymentOptions = ['物理サーバー（オンプレ）', '仮想マシン', 'クラウドVM', 'コンテナ／Kubernetes', 'PaaS／SaaS'] as const
+const osFamilyOptions = ['Linux', 'Windows', 'Unix', 'その他'] as const
+const linuxSecurityToolOptions = ['使用しない', 'SELinux', 'AppArmor', 'その他'] as const
+const linuxSecurityStateOptions = ['有効', '無効', '検討中'] as const
 const cpuUnitOptions = ['vCPU', 'core'] as const
 const capacityUnitOptions = ['MB', 'GB', 'TB'] as const
 
@@ -229,20 +263,78 @@ function runtimeLabel(items: RuntimeItem[], fallback = '') {
   return value || fallback
 }
 
+function networkInterfaceData(values: Partial<NetworkInterface> = {}): NetworkInterface {
+  return { id: values.id ?? crypto.randomUUID(), name: values.name ?? '', purpose: values.purpose ?? '', ipAddress: values.ipAddress ?? '', subnet: values.subnet ?? '', gateway: values.gateway ?? '' }
+}
+
+function selinuxVerificationCommand(category: string) {
+  switch (category) {
+    case 'ファイル・ディレクトリのラベル': return 'ls -Z / 対象パス確認、semanage fcontext、restorecon'
+    case 'ポートのラベル': return 'semanage port -l'
+    case 'Boolean': return 'getsebool -a / setsebool -P'
+    case 'プロセスのドメイン': return 'ps -eZ'
+    case '共有領域・コンテナのラベル': return 'mount設定、Boolean、ボリュームラベルを確認'
+    default: return ''
+  }
+}
+
+function selinuxServiceSettingData(values: Partial<SelinuxServiceSetting> = {}): SelinuxServiceSetting {
+  const category = values.category ?? 'ファイル・ディレクトリのラベル'
+  return { id: values.id ?? crypto.randomUUID(), serviceId: values.serviceId ?? '', category, target: values.target ?? '', desiredValue: values.desiredValue ?? '', status: values.status ?? '要確認', verificationCommand: values.verificationCommand ?? selinuxVerificationCommand(category), notes: values.notes ?? '' }
+}
+
 function middlewareData(values: Partial<Middleware> = {}): Middleware {
   const runtimes = (values.runtimes ?? runtimeFromLegacy(values.runtime ?? '')).map((item) => runtimeItemData(item))
   return { ...values, id: values.id ?? crypto.randomUUID(), name: values.name ?? '', version: values.version ?? '', port: values.port ?? '', framework: values.framework ?? '', executionMethod: values.executionMethod ?? '', repository: values.repository ?? '', configurationPath: values.configurationPath ?? '', configurationNote: values.configurationNote ?? '', level3Note: values.level3Note ?? '', runtimes, runtime: runtimeLabel(runtimes, values.runtime ?? '') }
 }
 
 function deviceData(kind: DeviceKind, displayName: string, values: Partial<Omit<DeviceData, 'middleware'>> & { middleware?: Partial<Middleware>[] } = {}): DeviceData {
+  const hostnameAliases = Array.isArray(values.hostnameAliases) ? values.hostnameAliases.filter((alias): alias is string => typeof alias === 'string') : []
+  const savedInterfaces = Array.isArray(values.networkInterfaces) ? values.networkInterfaces.map((item) => networkInterfaceData(item)) : []
+  const networkInterfaces = kind === 'server' && values.managementIpAddress && !savedInterfaces.some((item) => item.ipAddress === values.managementIpAddress)
+    ? [...savedInterfaces, networkInterfaceData({ purpose: '管理', ipAddress: values.managementIpAddress })]
+    : savedInterfaces
+  const legacySecurityModule = values.linuxSecurityModule ?? ''
+  const legacySecurityTool = legacySecurityModule.includes('AppArmor') ? 'AppArmor' : legacySecurityModule.includes('SELinux') ? 'SELinux' : ''
+  const legacySecurityState = /Enforcing|Permissive|有効/i.test(legacySecurityModule) ? '有効' : /無効|Disabled/i.test(legacySecurityModule) ? '無効' : ''
+  const selinuxServiceSettings = Array.isArray(values.selinuxServiceSettings) ? values.selinuxServiceSettings.map((item) => selinuxServiceSettingData(item)) : []
   const base = {
     label: displayName,
     kind,
     displayName,
     hostname: '',
+    hostnameAliases: [] as string[],
     ipAddress: '',
+    networkInterfaces: [] as NetworkInterface[],
+    osFamily: '',
     osName: '',
     osVersion: '',
+    linuxDistribution: '',
+    linuxKernelVersion: '',
+    linuxInitSystem: '',
+    linuxPackageManager: '',
+    linuxFileSystem: '',
+    linuxSecurityModule: '',
+    linuxSecurityTool: '',
+    linuxSecurityState: '',
+    selinuxMode: '',
+    selinuxPolicy: '',
+    selinuxRules: '',
+    selinuxExceptions: '',
+    selinuxAuditLog: '',
+    selinuxBootStatus: '',
+    selinuxManagementTools: '',
+    selinuxAuditd: '',
+    selinuxPermissiveDomains: '',
+    selinuxCustomPolicy: '',
+    selinuxUserRole: '',
+    selinuxServiceSettings: [] as SelinuxServiceSetting[],
+    appArmorMode: '',
+    appArmorProfilePolicy: '',
+    appArmorProfiles: '',
+    appArmorExceptions: '',
+    appArmorLog: '',
+    linuxLogging: '',
     cpu: '',
     cpuValue: '',
     cpuUnit: 'vCPU',
@@ -282,7 +374,7 @@ function deviceData(kind: DeviceKind, displayName: string, values: Partial<Omit<
   const cpu = parseResourceValue(base.cpu, values.cpuValue ?? '', values.cpuUnit ?? '', cpuUnitOptions, 'vCPU')
   const memory = parseResourceValue(base.memory, values.memoryValue ?? '', values.memoryUnit ?? '', capacityUnitOptions, 'GB')
   const disk = parseResourceValue(base.disk, values.diskValue ?? '', values.diskUnit ?? '', capacityUnitOptions, 'GB')
-  return { ...base, cpuValue: cpu.value, cpuUnit: cpu.unit, cpu: formatResource(cpu.value, cpu.unit), memoryValue: memory.value, memoryUnit: memory.unit, memory: formatResource(memory.value, memory.unit), diskValue: disk.value, diskUnit: disk.unit, disk: formatResource(disk.value, disk.unit) }
+  return { ...base, hostnameAliases, networkInterfaces, selinuxServiceSettings, linuxSecurityTool: values.linuxSecurityTool ?? legacySecurityTool, linuxSecurityState: values.linuxSecurityState ?? legacySecurityState, managementIpAddress: kind === 'server' ? '' : base.managementIpAddress, cpuValue: cpu.value, cpuUnit: cpu.unit, cpu: formatResource(cpu.value, cpu.unit), memoryValue: memory.value, memoryUnit: memory.unit, memory: formatResource(memory.value, memory.unit), diskValue: disk.value, diskUnit: disk.unit, disk: formatResource(disk.value, disk.unit) }
 }
 
 const initialNodes: Node<DeviceData>[] = [
@@ -290,21 +382,21 @@ const initialNodes: Node<DeviceData>[] = [
     id: 'web01',
     type: 'device',
     position: { x: 90, y: 120 },
-    data: deviceData('server', 'Webサーバー', { hostname: 'web01', ipAddress: '192.168.10.11', osName: 'RHEL', osVersion: '9.6', cpu: '4 vCPU', memory: '8 GB', disk: '100 GB', purpose: 'Webサーバー', deploymentType: '仮想マシン', platformProvider: 'VMware vSphere', platformLocation: 'prod-cluster', platformResource: 'esxi-01', platformDetail: 'web01', middleware: [{ id: 'nginx-web01', name: 'Nginx', version: '1.24', port: '80, 443', runtime: 'Nginx 1.24', executionMethod: 'systemd', configurationPath: '/etc/nginx/nginx.conf', configurationNote: 'TLS終端と静的コンテンツ配信' }, { id: 'php-fpm-web01', name: 'PHP-FPM', version: '8.3', port: '9000', runtime: 'PHP 8.3', executionMethod: 'systemd', configurationPath: '/etc/php-fpm.d/www.conf', configurationNote: 'Webアプリケーション実行' }] }),
+    data: deviceData('server', 'Webサーバー', { hostname: 'web01', ipAddress: '192.168.10.11', osFamily: 'Linux', osName: 'RHEL', osVersion: '9.6', linuxDistribution: 'RHEL', linuxKernelVersion: '5.14', linuxInitSystem: 'systemd', linuxPackageManager: 'dnf', linuxFileSystem: 'XFS', linuxSecurityModule: 'SELinux: Enforcing', linuxLogging: 'systemd-journald', cpu: '4 vCPU', memory: '8 GB', disk: '100 GB', purpose: 'Webサーバー', deploymentType: '仮想マシン', platformProvider: 'VMware vSphere', platformLocation: 'prod-cluster', platformResource: 'esxi-01', platformDetail: 'web01', middleware: [{ id: 'nginx-web01', name: 'Nginx', version: '1.24', port: '80, 443', runtime: 'Nginx 1.24', executionMethod: 'systemd', configurationPath: '/etc/nginx/nginx.conf', configurationNote: 'TLS終端と静的コンテンツ配信' }, { id: 'php-fpm-web01', name: 'PHP-FPM', version: '8.3', port: '9000', runtime: 'PHP 8.3', executionMethod: 'systemd', configurationPath: '/etc/php-fpm.d/www.conf', configurationNote: 'Webアプリケーション実行' }] }),
     style: { borderColor: kindColors.server },
   },
   {
     id: 'app01',
     type: 'device',
     position: { x: 390, y: 120 },
-    data: deviceData('server', 'APサーバー', { hostname: 'app01', ipAddress: '192.168.20.11', osName: 'RHEL', osVersion: '9.6', cpu: '4 vCPU', memory: '8 GB', disk: '100 GB', purpose: 'アプリケーションサーバー', deploymentType: '仮想マシン', platformProvider: 'VMware vSphere', platformLocation: 'prod-cluster', platformResource: 'esxi-02', platformDetail: 'app01', middleware: [{ id: 'java-app01', name: 'Java Runtime', version: '21', port: '8080', runtime: 'Java 21', executionMethod: 'systemd', configurationNote: 'アプリケーション実行環境' }] }),
+    data: deviceData('server', 'APサーバー', { hostname: 'app01', ipAddress: '192.168.20.11', osFamily: 'Linux', osName: 'RHEL', osVersion: '9.6', linuxDistribution: 'RHEL', linuxKernelVersion: '5.14', linuxInitSystem: 'systemd', linuxPackageManager: 'dnf', linuxFileSystem: 'XFS', linuxSecurityModule: 'SELinux: Enforcing', linuxLogging: 'systemd-journald', cpu: '4 vCPU', memory: '8 GB', disk: '100 GB', purpose: 'アプリケーションサーバー', deploymentType: '仮想マシン', platformProvider: 'VMware vSphere', platformLocation: 'prod-cluster', platformResource: 'esxi-02', platformDetail: 'app01', middleware: [{ id: 'java-app01', name: 'Java Runtime', version: '21', port: '8080', runtime: 'Java 21', executionMethod: 'systemd', configurationNote: 'アプリケーション実行環境' }] }),
     style: { borderColor: kindColors.server },
   },
   {
     id: 'db01',
     type: 'device',
     position: { x: 690, y: 120 },
-    data: deviceData('server', 'DBサーバー', { hostname: 'db01', ipAddress: '192.168.30.11', osName: 'RHEL', osVersion: '9.6', cpu: '8 vCPU', memory: '16 GB', disk: '200 GB', purpose: 'データベースサーバー', deploymentType: '仮想マシン', platformProvider: 'VMware vSphere', platformLocation: 'prod-cluster', platformResource: 'esxi-03', platformDetail: 'db01', middleware: [{ id: 'postgres-db01', name: 'PostgreSQL', version: '16', port: '5432', runtime: 'PostgreSQL 16', executionMethod: 'systemd', configurationPath: '/var/lib/pgsql/data/postgresql.conf', configurationNote: '業務データベース' }] }),
+    data: deviceData('server', 'DBサーバー', { hostname: 'db01', ipAddress: '192.168.30.11', osFamily: 'Linux', osName: 'RHEL', osVersion: '9.6', linuxDistribution: 'RHEL', linuxKernelVersion: '5.14', linuxInitSystem: 'systemd', linuxPackageManager: 'dnf', linuxFileSystem: 'XFS', linuxSecurityModule: 'SELinux: Enforcing', linuxLogging: 'systemd-journald', cpu: '8 vCPU', memory: '16 GB', disk: '200 GB', purpose: 'データベースサーバー', deploymentType: '仮想マシン', platformProvider: 'VMware vSphere', platformLocation: 'prod-cluster', platformResource: 'esxi-03', platformDetail: 'db01', middleware: [{ id: 'postgres-db01', name: 'PostgreSQL', version: '16', port: '5432', runtime: 'PostgreSQL 16', executionMethod: 'systemd', configurationPath: '/var/lib/pgsql/data/postgresql.conf', configurationNote: '業務データベース' }] }),
     style: { borderColor: kindColors.server },
   },
   {
@@ -704,7 +796,7 @@ function levelTwoDiagramSvg(server: Node<DeviceData>) {
   }).join('') : `<text x="55" y="${middlewareY + 70}" fill="#6b7280" font-family="Arial, sans-serif" font-size="14">ミドルウェア未登録</text>`
   const card = (x: number, y: number, width: number, title: string, lines: string[], fill: string, stroke: string) => `<rect x="${x}" y="${y}" width="${width}" height="78" rx="8" fill="${fill}" stroke="${stroke}"/><text x="${x + 16}" y="${y + 27}" fill="#274766" font-family="Arial, sans-serif" font-size="15" font-weight="700">${title}</text>${lines.slice(0, 2).map((line, index) => `<text x="${x + 16}" y="${y + 52 + index * 18}" fill="#334155" font-family="Arial, sans-serif" font-size="12">${escapeXml(line || '未設定')}</text>`).join('')}`
   const title = escapeXml(data.displayName)
-  return { width, height, svg: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="#f8fbff"/><rect x="20" y="18" width="820" height="${height - 36}" rx="12" fill="#ffffff" stroke="#86a9d7" stroke-width="3"/><rect x="40" y="38" width="780" height="42" rx="7" fill="#e2eefc" stroke="#7d9fc8"/><text x="56" y="64" fill="#214f83" font-family="Arial, sans-serif" font-size="17" font-weight="700">サーバー / VM　${title}</text><rect x="40" y="98" width="780" height="88" rx="8" fill="#f5fcfc" stroke="#8ac4c8"/><text x="56" y="124" fill="#245d63" font-family="Arial, sans-serif" font-size="15" font-weight="700">配置・実行基盤: ${escapeXml(data.deploymentType || '未設定')}</text><text x="56" y="151" fill="#334155" font-family="Arial, sans-serif" font-size="13">${escapeXml(profile.provider)}: ${escapeXml(data.platformProvider || '未設定')}　/　${escapeXml(profile.location)}: ${escapeXml(data.platformLocation || '未設定')}</text><text x="56" y="174" fill="#334155" font-family="Arial, sans-serif" font-size="13">${escapeXml(profile.resource)}: ${escapeXml(data.platformResource || '未設定')}　/　${escapeXml(profile.detail)}: ${escapeXml(data.platformDetail || '未設定')}</text>${card(40, 202, 370, 'CPU・メモリ', [`CPU: ${data.cpu || '未設定'}`, `メモリ: ${data.memory || '未設定'}`], '#f8fbff', '#b8cde5')}${card(430, 202, 390, 'ストレージ・データ', [`ディスク: ${data.disk || '未設定'}`, data.purpose || '用途未設定'], '#fffdf7', '#e4d09e')}${card(40, osY, 780, 'OS', [`${data.osName} ${data.osVersion}`.trim() || '未設定', `${data.hostname || 'ホスト名未設定'} / ${data.ipAddress || 'IP未設定'}`], '#f7fcf8', '#a8d0b6')}<rect x="40" y="${middlewareY}" width="780" height="${serviceRows * 84 + 36}" rx="8" fill="#fbf9ff" stroke="#d5c5ef"/><text x="56" y="${middlewareY + 26}" fill="#4c317f" font-family="Arial, sans-serif" font-size="15" font-weight="700">MW・アプリケーション</text>${services}${card(40, lowerY, 370, 'ネットワーク', [`管理IP: ${data.managementIpAddress || '未設定'}`], '#f7fcff', '#b6d6e9')}${card(430, lowerY, 390, 'データベース', [data.dbUsage || '未設定', [data.dbType, data.dbVersion].filter(Boolean).join(' / ') || '種別・バージョン未設定'], '#fbf9ff', '#c5b4e4')}${card(40, databaseY, 370, 'バックアップ・復旧', [data.backupMethod || '方式未設定', `保持期間: ${data.backupRetention || '未設定'}`], '#fbf9ff', '#c6b6e6')}${card(430, databaseY, 390, '監視・ログ', [data.monitoringMethod || '方法未設定', `ログ保存期間: ${data.logRetention || '未設定'}`], '#f5fcfb', '#9dc9c8')}</svg>` }
+  return { width, height, svg: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="#f8fbff"/><rect x="20" y="18" width="820" height="${height - 36}" rx="12" fill="#ffffff" stroke="#86a9d7" stroke-width="3"/><rect x="40" y="38" width="780" height="42" rx="7" fill="#e2eefc" stroke="#7d9fc8"/><text x="56" y="64" fill="#214f83" font-family="Arial, sans-serif" font-size="17" font-weight="700">サーバー / VM　${title}</text><rect x="40" y="98" width="780" height="88" rx="8" fill="#f5fcfc" stroke="#8ac4c8"/><text x="56" y="124" fill="#245d63" font-family="Arial, sans-serif" font-size="15" font-weight="700">配置・実行基盤: ${escapeXml(data.deploymentType || '未設定')}</text><text x="56" y="151" fill="#334155" font-family="Arial, sans-serif" font-size="13">${escapeXml(profile.provider)}: ${escapeXml(data.platformProvider || '未設定')}　/　${escapeXml(profile.location)}: ${escapeXml(data.platformLocation || '未設定')}</text><text x="56" y="174" fill="#334155" font-family="Arial, sans-serif" font-size="13">${escapeXml(profile.resource)}: ${escapeXml(data.platformResource || '未設定')}　/　${escapeXml(profile.detail)}: ${escapeXml(data.platformDetail || '未設定')}</text>${card(40, 202, 370, 'CPU・メモリ', [`CPU: ${data.cpu || '未設定'}`, `メモリ: ${data.memory || '未設定'}`], '#f8fbff', '#b8cde5')}${card(430, 202, 390, 'ストレージ・データ', [`ディスク: ${data.disk || '未設定'}`, data.purpose || '用途未設定'], '#fffdf7', '#e4d09e')}${card(40, osY, 780, 'OS', [`${data.osName} ${data.osVersion}`.trim() || '未設定', `主ホスト名: ${data.hostname || '未設定'}${data.hostnameAliases.length ? ` / 別名 ${data.hostnameAliases.length}件` : ''}`], '#f7fcf8', '#a8d0b6')}<rect x="40" y="${middlewareY}" width="780" height="${serviceRows * 84 + 36}" rx="8" fill="#fbf9ff" stroke="#d5c5ef"/><text x="56" y="${middlewareY + 26}" fill="#4c317f" font-family="Arial, sans-serif" font-size="15" font-weight="700">MW・アプリケーション</text>${services}${card(40, lowerY, 370, 'ネットワーク', [`IPアドレス: ${data.ipAddress || '未設定'}`, `追加IP: ${data.networkInterfaces.length}件`], '#f7fcff', '#b6d6e9')}${card(430, lowerY, 390, 'データベース', [data.dbUsage || '未設定', [data.dbType, data.dbVersion].filter(Boolean).join(' / ') || '種別・バージョン未設定'], '#fbf9ff', '#c5b4e4')}${card(40, databaseY, 370, 'バックアップ・復旧', [data.backupMethod || '方式未設定', `保持期間: ${data.backupRetention || '未設定'}`], '#fbf9ff', '#c6b6e6')}${card(430, databaseY, 390, '監視・ログ', [data.monitoringMethod || '方法未設定', `ログ保存期間: ${data.logRetention || '未設定'}`], '#f5fcfb', '#9dc9c8')}</svg>` }
 }
 
 function normalizeNodes(nodes: Node<DeviceData>[]) {
@@ -747,7 +839,7 @@ export default function App() {
   const [savedProjects, setSavedProjects] = useState<StoredProject[]>(readBrowserProjects)
   const [showProjectLibrary, setShowProjectLibrary] = useState(false)
   const [saveMessage, setSaveMessage] = useState('')
-  const [openMenu, setOpenMenu] = useState<'file' | 'edit' | 'view' | 'layout' | null>(null)
+  const [openMenu, setOpenMenu] = useState<'file' | 'export' | 'edit' | 'view' | 'layout' | null>(null)
   const [panelWidths, setPanelWidths] = useState({ palette: 200, properties: 272 })
   const [workspaceHeight, setWorkspaceHeight] = useState(544)
   const fileInput = useRef<HTMLInputElement>(null)
@@ -939,8 +1031,13 @@ export default function App() {
         if (!data.hostname.trim()) results.push({ severity: 'warning', message: `${data.displayName}にホスト名が入力されていません。`, nodeIds: [node.id] })
         if (!data.ipAddress.trim()) results.push({ severity: 'warning', message: `${data.displayName}にIPアドレスが入力されていません。`, nodeIds: [node.id] })
       }
-      const address = data.kind === 'server' ? data.ipAddress.trim() : data.managementIpAddress.trim()
-      if (address) addresses.set(address, [...(addresses.get(address) ?? []), node])
+      const nodeAddresses = data.kind === 'server'
+        ? [data.ipAddress, data.managementIpAddress, ...data.networkInterfaces.map((item) => item.ipAddress)]
+        : [data.managementIpAddress]
+      const uniqueAddresses = [...new Set(nodeAddresses.map((address) => address.trim()).filter(Boolean))]
+      uniqueAddresses.forEach((address) => {
+        addresses.set(address, [...(addresses.get(address) ?? []), node])
+      })
       if (!edges.some((edge) => edge.source === node.id || edge.target === node.id)) {
         results.push({ severity: 'info', message: `${data.displayName}には接続情報が登録されていません。`, nodeIds: [node.id] })
       }
@@ -1007,6 +1104,47 @@ export default function App() {
 
   const updateNode = (field: EditableField, value: string) => {
     if (selectedNode) updateServer(selectedNode.id, field, value)
+  }
+
+  const updateHostnameAlias = (serverId: string, index: number, value: string) => {
+    setNodes((current) => current.map((node) => node.id === serverId ? { ...node, data: { ...node.data, hostnameAliases: node.data.hostnameAliases.map((alias, aliasIndex) => aliasIndex === index ? value : alias) } } : node))
+  }
+
+  const addHostnameAlias = (serverId: string) => {
+    setNodes((current) => current.map((node) => node.id === serverId ? { ...node, data: { ...node.data, hostnameAliases: [...node.data.hostnameAliases, ''] } } : node))
+  }
+
+  const deleteHostnameAlias = (serverId: string, index: number) => {
+    setNodes((current) => current.map((node) => node.id === serverId ? { ...node, data: { ...node.data, hostnameAliases: node.data.hostnameAliases.filter((_, aliasIndex) => aliasIndex !== index) } } : node))
+  }
+
+  const updateNetworkInterface = (serverId: string, interfaceId: string, field: Exclude<keyof NetworkInterface, 'id'>, value: string) => {
+    setNodes((current) => current.map((node) => node.id === serverId ? { ...node, data: { ...node.data, networkInterfaces: node.data.networkInterfaces.map((item) => item.id === interfaceId ? { ...item, [field]: value } : item) } } : node))
+  }
+
+  const addNetworkInterface = (serverId: string) => {
+    setNodes((current) => current.map((node) => node.id === serverId ? { ...node, data: { ...node.data, networkInterfaces: [...node.data.networkInterfaces, networkInterfaceData()] } } : node))
+  }
+
+  const deleteNetworkInterface = (serverId: string, interfaceId: string) => {
+    setNodes((current) => current.map((node) => node.id === serverId ? { ...node, data: { ...node.data, networkInterfaces: node.data.networkInterfaces.filter((item) => item.id !== interfaceId) } } : node))
+  }
+
+  const updateSelinuxServiceSetting = (serverId: string, settingId: string, field: Exclude<keyof SelinuxServiceSetting, 'id'>, value: string) => {
+    setNodes((current) => current.map((node) => node.id === serverId ? { ...node, data: { ...node.data, selinuxServiceSettings: node.data.selinuxServiceSettings.map((item) => {
+      if (item.id !== settingId) return item
+      const next = { ...item, [field]: value }
+      if (field === 'category') next.verificationCommand = selinuxVerificationCommand(value)
+      return next
+    }) } } : node))
+  }
+
+  const addSelinuxServiceSetting = (serverId: string) => {
+    setNodes((current) => current.map((node) => node.id === serverId ? { ...node, data: { ...node.data, selinuxServiceSettings: [...node.data.selinuxServiceSettings, selinuxServiceSettingData()] } } : node))
+  }
+
+  const deleteSelinuxServiceSetting = (serverId: string, settingId: string) => {
+    setNodes((current) => current.map((node) => node.id === serverId ? { ...node, data: { ...node.data, selinuxServiceSettings: node.data.selinuxServiceSettings.filter((item) => item.id !== settingId) } } : node))
   }
 
   const updateSelectedAppearance = (field: 'displayName' | 'iconKey' | 'color', value: string) => {
@@ -1352,12 +1490,16 @@ export default function App() {
   const exportCsv = () => {
     const serverRows = nodes.filter((node) => node.data.kind === 'server')
     const serverCsv = [
-      ['表示名', 'ホスト名', 'IPアドレス', 'OS', 'CPU 数値', 'CPU 単位', 'メモリ 数値', 'メモリ 単位', 'ディスク 数値', 'ディスク 単位', '用途'],
-      ...serverRows.map((node) => [node.data.displayName, node.data.hostname, node.data.ipAddress, [node.data.osName, node.data.osVersion].filter(Boolean).join(' '), node.data.cpuValue, node.data.cpuUnit, node.data.memoryValue, node.data.memoryUnit, node.data.diskValue, node.data.diskUnit, node.data.purpose]),
+      ['表示名', '主ホスト名', 'ホスト名別名', 'IPアドレス', '追加IP・インターフェース', 'OS分類', 'OS', 'Linux固有設定', 'CPU 数値', 'CPU 単位', 'メモリ 数値', 'メモリ 単位', 'ディスク 数値', 'ディスク 単位', '用途'],
+      ...serverRows.map((node) => [node.data.displayName, node.data.hostname, node.data.hostnameAliases.join(' / '), node.data.ipAddress, node.data.networkInterfaces.map((item) => [item.name, item.purpose, item.ipAddress, item.subnet, item.gateway].filter(Boolean).join(' / ')).join(' | '), node.data.osFamily, [node.data.osName, node.data.osVersion].filter(Boolean).join(' '), node.data.osFamily === 'Linux' ? [['ディストリビューション', node.data.linuxDistribution], ['カーネル', node.data.linuxKernelVersion], ['init', node.data.linuxInitSystem], ['パッケージ管理', node.data.linuxPackageManager], ['FS', node.data.linuxFileSystem], ['セキュリティ', node.data.linuxSecurityModule], ['ログ', node.data.linuxLogging]].filter(([, value]) => value).map(([label, value]) => `${label}: ${value}`).join(' / ') : '', node.data.cpuValue, node.data.cpuUnit, node.data.memoryValue, node.data.memoryUnit, node.data.diskValue, node.data.diskUnit, node.data.purpose]),
     ].map((row) => row.map(csvValue).join(',')).join('\n')
     const ipCsv = [
       ['IPアドレス', '部品名', '種別', 'ホスト名', '用途'],
-      ...nodes.map((node) => [node.data.kind === 'server' ? node.data.ipAddress : node.data.managementIpAddress, node.data.displayName, kindLabels[node.data.kind], node.data.hostname, node.data.purpose]),
+      ...nodes.flatMap((node) => node.data.kind === 'server' ? [
+        [node.data.ipAddress, node.data.displayName, kindLabels[node.data.kind], node.data.hostname, node.data.purpose],
+        [node.data.managementIpAddress, node.data.displayName, kindLabels[node.data.kind], node.data.hostname, '管理IP'],
+        ...node.data.networkInterfaces.map((item) => [item.ipAddress, node.data.displayName, kindLabels[node.data.kind], node.data.hostname, [item.name, item.purpose].filter(Boolean).join(' / ')]),
+      ].filter((row) => row[0]) : [[node.data.managementIpAddress, node.data.displayName, kindLabels[node.data.kind], node.data.hostname, node.data.purpose]]),
     ].map((row) => row.map(csvValue).join(',')).join('\n')
     download('server-list.csv', `\uFEFF${serverCsv}`, 'text/csv;charset=utf-8')
     download('ip-address-list.csv', `\uFEFF${ipCsv}`, 'text/csv;charset=utf-8')
@@ -1405,7 +1547,7 @@ export default function App() {
       level1.addImage(level1ImageId, { tl: { col: 1, row: 2 }, ext: { width: 760, height: Math.round(760 * level1Image.height / level1Image.width) } })
       let level1Row = 4 + Math.ceil((760 * level1Image.height / level1Image.width) / 20)
       level1Row = addTable(level1, level1Row, 'システム共通方針', ['構成方式', '共通ネットワーク', '管理・運用主体', '可用性方針', '外部連携・境界方針', '共通メモ', '設計メモ'], [[systemPolicy.architecturePolicy, systemPolicy.sharedNetwork, systemPolicy.governance, systemPolicy.availabilityPolicy, systemPolicy.boundaryPolicy, systemPolicy.notes, systemPolicy.designNote]]) + 2
-      level1Row = addTable(level1, level1Row, '部品一覧', ['部品ID', '種別', '表示名', 'ホスト名', 'IPアドレス', '管理IPアドレス', '用途', '備考'], nodes.map((node) => [node.id, kindLabels[node.data.kind], node.data.displayName, node.data.hostname, node.data.ipAddress, node.data.managementIpAddress, node.data.purpose, node.data.notes])) + 2
+      level1Row = addTable(level1, level1Row, '部品一覧', ['部品ID', '種別', '表示名', '主ホスト名', 'ホスト名別名', 'IPアドレス', '用途', '備考'], nodes.map((node) => [node.id, kindLabels[node.data.kind], node.data.displayName, node.data.hostname, node.data.hostnameAliases.join(' / '), node.data.ipAddress, node.data.purpose, node.data.notes])) + 2
       addTable(level1, level1Row, '接続一覧', ['接続ID', '接続元', '接続先', '接続種別', '接続元IF', '接続先IF', '備考'], edges.map((edge) => [edge.id, nodes.find((node) => node.id === edge.source)?.data.displayName ?? edge.source, nodes.find((node) => node.id === edge.target)?.data.displayName ?? edge.target, edge.data?.connectionType ?? 'network', edge.data?.sourceInterface ?? '', edge.data?.targetInterface ?? '', edge.data?.notes ?? '']))
 
       const level2 = workbook.addWorksheet('レベル2_サーバー詳細')
@@ -1417,7 +1559,7 @@ export default function App() {
         level2.addImage(imageId, { tl: { col: 1, row: level2Row }, ext: { width: 760, height: Math.round(760 * image.height / image.width) } })
         level2Row += Math.ceil((760 * image.height / image.width) / 20) + 3
       }
-      addTable(level2, level2Row, 'サーバー詳細一覧', ['サーバー名', '配置形態', 'クラウド／仮想化基盤', '配置先', 'リソース・クラスタ', '補足情報', 'CPU 数値', 'CPU 単位', 'メモリ 数値', 'メモリ 単位', 'OS名', 'OSバージョン', 'ホスト名', 'IPアドレス', '管理IPアドレス', 'ディスク 数値', 'ディスク 単位', '用途', 'DB使用有無', 'DB種別・サービス', 'DBバージョン', 'バックアップ方式', '保持期間', '監視・ログ方法', 'ログ保存期間', '備考', '設計メモ'], servers.map((node) => [node.data.displayName, node.data.deploymentType, node.data.platformProvider, node.data.platformLocation, node.data.platformResource, node.data.platformDetail, node.data.cpuValue, node.data.cpuUnit, node.data.memoryValue, node.data.memoryUnit, node.data.osName, node.data.osVersion, node.data.hostname, node.data.ipAddress, node.data.managementIpAddress, node.data.diskValue, node.data.diskUnit, node.data.purpose, node.data.dbUsage, node.data.dbType, node.data.dbVersion, node.data.backupMethod, node.data.backupRetention, node.data.monitoringMethod, node.data.logRetention, node.data.notes, node.data.level2Note]))
+      addTable(level2, level2Row, 'サーバー詳細一覧', ['サーバー名', '配置形態', 'クラウド／仮想化基盤', '配置先', 'リソース・クラスタ', '補足情報', 'CPU 数値', 'CPU 単位', 'メモリ 数値', 'メモリ 単位', 'OS名', 'OSバージョン', '主ホスト名', 'ホスト名別名', 'IPアドレス', '追加IP・インターフェース', 'ディスク 数値', 'ディスク 単位', '用途', 'DB使用有無', 'DB種別・サービス', 'DBバージョン', 'バックアップ方式', '保持期間', '監視・ログ方法', 'ログ保存期間', '備考', '設計メモ'], servers.map((node) => [node.data.displayName, node.data.deploymentType, node.data.platformProvider, node.data.platformLocation, node.data.platformResource, node.data.platformDetail, node.data.cpuValue, node.data.cpuUnit, node.data.memoryValue, node.data.memoryUnit, node.data.osName, node.data.osVersion, node.data.hostname, node.data.hostnameAliases.join(' / '), node.data.ipAddress, node.data.networkInterfaces.map((item) => [item.name, item.purpose, item.ipAddress, item.subnet, item.gateway].filter(Boolean).join(' / ')).join(' | '), node.data.diskValue, node.data.diskUnit, node.data.purpose, node.data.dbUsage, node.data.dbType, node.data.dbVersion, node.data.backupMethod, node.data.backupRetention, node.data.monitoringMethod, node.data.logRetention, node.data.notes, node.data.level2Note]))
 
       const level3 = workbook.addWorksheet('レベル3_MWサービス')
       setupSheet(level3, 'レベル3 MW・サービス詳細', [20, 18, 22, 22, 20, 18, 16, 16, 32, 32, 40])
@@ -1426,7 +1568,7 @@ export default function App() {
       const level4 = workbook.addWorksheet('レベル4_設定パラメータ')
       setupSheet(level4, 'レベル4 設定・パラメータ', [16, 20, 22, 20, 20, 42])
       addTable(level4, 4, '設定・パラメータ一覧', ['対象区分', 'サーバー名', 'サービス名', 'カテゴリ', 'パラメータ', '値'], servers.flatMap((node) => [
-        ['サーバー', node.data.displayName, '', '配置・実行基盤', '配置形態', node.data.deploymentType], ['サーバー', node.data.displayName, '', '配置・実行基盤', 'クラウド／仮想化基盤', node.data.platformProvider], ['サーバー', node.data.displayName, '', '配置・実行基盤', 'リージョン・拠点', node.data.platformLocation], ['サーバー', node.data.displayName, '', '配置・実行基盤', 'リソース・クラスタ', node.data.platformResource], ['サーバー', node.data.displayName, '', '配置・実行基盤', '補足情報', node.data.platformDetail], ['サーバー', node.data.displayName, '', 'CPU・メモリ', 'CPU 数値', node.data.cpuValue], ['サーバー', node.data.displayName, '', 'CPU・メモリ', 'CPU 単位', node.data.cpuUnit], ['サーバー', node.data.displayName, '', 'CPU・メモリ', 'メモリ 数値', node.data.memoryValue], ['サーバー', node.data.displayName, '', 'CPU・メモリ', 'メモリ 単位', node.data.memoryUnit], ['サーバー', node.data.displayName, '', 'ストレージ・データ', 'ディスク 数値', node.data.diskValue], ['サーバー', node.data.displayName, '', 'ストレージ・データ', 'ディスク 単位', node.data.diskUnit], ['サーバー', node.data.displayName, '', 'データベース', 'DB使用有無', node.data.dbUsage], ['サーバー', node.data.displayName, '', 'データベース', 'DB種別・サービス', node.data.dbType], ['サーバー', node.data.displayName, '', 'データベース', 'DBバージョン', node.data.dbVersion], ['サーバー', node.data.displayName, '', 'バックアップ・復旧', '方式・サービス', node.data.backupMethod], ['サーバー', node.data.displayName, '', 'バックアップ・復旧', '実行頻度', node.data.backupSchedule], ['サーバー', node.data.displayName, '', 'バックアップ・復旧', '保持期間', node.data.backupRetention], ['サーバー', node.data.displayName, '', 'バックアップ・復旧', '保存先', node.data.backupDestination], ['サーバー', node.data.displayName, '', 'バックアップ・復旧', '復旧目標（RPO / RTO）', node.data.recoveryTarget], ['サーバー', node.data.displayName, '', 'バックアップ・復旧', '復元テスト', node.data.restoreTest], ['サーバー', node.data.displayName, '', '監視・ログ', '方法', node.data.monitoringMethod], ['サーバー', node.data.displayName, '', '監視・ログ', 'ログ保存期間', node.data.logRetention], ['サーバー', node.data.displayName, '', 'OS', 'ホスト名', node.data.hostname], ['サーバー', node.data.displayName, '', 'OS', 'OS名', node.data.osName], ['サーバー', node.data.displayName, '', 'OS', 'OSバージョン', node.data.osVersion], ['サーバー', node.data.displayName, '', 'ネットワーク', 'IPアドレス', node.data.ipAddress], ['サーバー', node.data.displayName, '', 'ネットワーク', '管理IPアドレス', node.data.managementIpAddress], ['サーバー', node.data.displayName, '', '共通', '用途', node.data.purpose], ['サーバー', node.data.displayName, '', '共通', '備考', node.data.notes],
+        ['サーバー', node.data.displayName, '', '配置・実行基盤', '配置形態', node.data.deploymentType], ['サーバー', node.data.displayName, '', '配置・実行基盤', 'クラウド／仮想化基盤', node.data.platformProvider], ['サーバー', node.data.displayName, '', '配置・実行基盤', 'リージョン・拠点', node.data.platformLocation], ['サーバー', node.data.displayName, '', '配置・実行基盤', 'リソース・クラスタ', node.data.platformResource], ['サーバー', node.data.displayName, '', '配置・実行基盤', '補足情報', node.data.platformDetail], ['サーバー', node.data.displayName, '', 'CPU・メモリ', 'CPU 数値', node.data.cpuValue], ['サーバー', node.data.displayName, '', 'CPU・メモリ', 'CPU 単位', node.data.cpuUnit], ['サーバー', node.data.displayName, '', 'CPU・メモリ', 'メモリ 数値', node.data.memoryValue], ['サーバー', node.data.displayName, '', 'CPU・メモリ', 'メモリ 単位', node.data.memoryUnit], ['サーバー', node.data.displayName, '', 'ストレージ・データ', 'ディスク 数値', node.data.diskValue], ['サーバー', node.data.displayName, '', 'ストレージ・データ', 'ディスク 単位', node.data.diskUnit], ['サーバー', node.data.displayName, '', 'データベース', 'DB使用有無', node.data.dbUsage], ['サーバー', node.data.displayName, '', 'データベース', 'DB種別・サービス', node.data.dbType], ['サーバー', node.data.displayName, '', 'データベース', 'DBバージョン', node.data.dbVersion], ['サーバー', node.data.displayName, '', 'バックアップ・復旧', '方式・サービス', node.data.backupMethod], ['サーバー', node.data.displayName, '', 'バックアップ・復旧', '実行頻度', node.data.backupSchedule], ['サーバー', node.data.displayName, '', 'バックアップ・復旧', '保持期間', node.data.backupRetention], ['サーバー', node.data.displayName, '', 'バックアップ・復旧', '保存先', node.data.backupDestination], ['サーバー', node.data.displayName, '', 'バックアップ・復旧', '復旧目標（RPO / RTO）', node.data.recoveryTarget], ['サーバー', node.data.displayName, '', 'バックアップ・復旧', '復元テスト', node.data.restoreTest], ['サーバー', node.data.displayName, '', '監視・ログ', '方法', node.data.monitoringMethod], ['サーバー', node.data.displayName, '', '監視・ログ', 'ログ保存期間', node.data.logRetention], ['サーバー', node.data.displayName, '', 'OS', '主ホスト名', node.data.hostname], ...node.data.hostnameAliases.map((alias) => ['サーバー', node.data.displayName, '', 'OS', 'ホスト名別名', alias]), ['サーバー', node.data.displayName, '', 'OS', 'OS名', node.data.osName], ['サーバー', node.data.displayName, '', 'OS', 'OSバージョン', node.data.osVersion], ['サーバー', node.data.displayName, '', 'ネットワーク', '代表IPアドレス', node.data.ipAddress], ['サーバー', node.data.displayName, '', 'ネットワーク', '管理IPアドレス', node.data.managementIpAddress], ...node.data.networkInterfaces.flatMap((item) => [['サーバー', node.data.displayName, '', 'ネットワーク', `${item.name || '追加IF'} 用途`, item.purpose], ['サーバー', node.data.displayName, '', 'ネットワーク', `${item.name || '追加IF'} IPアドレス`, item.ipAddress], ['サーバー', node.data.displayName, '', 'ネットワーク', `${item.name || '追加IF'} サブネット`, item.subnet], ['サーバー', node.data.displayName, '', 'ネットワーク', `${item.name || '追加IF'} ゲートウェイ`, item.gateway]]), ['サーバー', node.data.displayName, '', '共通', '用途', node.data.purpose], ['サーバー', node.data.displayName, '', '共通', '備考', node.data.notes],
         ...node.data.middleware.flatMap((middleware) => [...middleware.runtimes.flatMap((runtime) => [['MW・サービス', node.data.displayName, middleware.name, '実行環境・ランタイム', '名称', runtime.name], ['MW・サービス', node.data.displayName, middleware.name, '実行環境・ランタイム', 'バージョン', runtime.version]]), ['MW・サービス', node.data.displayName, middleware.name, 'アプリケーション・ランタイム', 'フレームワーク', middleware.framework], ['MW・サービス', node.data.displayName, middleware.name, 'アプリケーション・ランタイム', '実行方式', middleware.executionMethod], ['MW・サービス', node.data.displayName, middleware.name, 'アプリケーション・ランタイム', 'リポジトリ／イメージ', middleware.repository], ['MW・サービス', node.data.displayName, middleware.name, 'アプリケーション・ランタイム', '設定ファイル', middleware.configurationPath], ['MW・サービス', node.data.displayName, middleware.name, 'MW・サービス', 'バージョン', middleware.version], ['MW・サービス', node.data.displayName, middleware.name, 'MW・サービス', 'ポート', middleware.port], ['MW・サービス', node.data.displayName, middleware.name, 'MW・サービス', '設定メモ', middleware.configurationNote]]),
       ]))
 
@@ -1466,9 +1608,14 @@ export default function App() {
             <button role="menuitem" onClick={runMenuAction(() => setShowProjectLibrary(true))}>保存済みを開く</button>
             <span className="menu-divider" />
             <button role="menuitem" onClick={runMenuAction(() => fileInput.current?.click())}>JSONを開く</button>
+          </div>}
+        </div>
+        <div className="menu-group">
+          <button className={openMenu === 'export' ? 'menu-trigger active' : 'menu-trigger'} aria-haspopup="menu" aria-expanded={openMenu === 'export'} onClick={() => setOpenMenu((current) => current === 'export' ? null : 'export')}>書き出し</button>
+          {openMenu === 'export' && <div className="menu-dropdown" role="menu">
             <button role="menuitem" onClick={runMenuAction(saveProject)}>JSONを書き出し</button>
-            <button role="menuitem" onClick={runMenuAction(exportCsv)}>CSVを出力</button>
-            <button role="menuitem" onClick={runMenuAction(exportExcel)}>Excelを出力</button>
+            <button role="menuitem" onClick={runMenuAction(exportCsv)}>CSVを書き出し</button>
+            <button role="menuitem" onClick={runMenuAction(exportExcel)}>Excelを書き出し</button>
           </div>}
         </div>
         <div className="menu-group">
@@ -1615,17 +1762,26 @@ export default function App() {
         </div>
         {validations.length ? <ul>{validations.map((item, index) => <li key={`${item.message}-${index}`} className={item.severity} onClick={() => setSelection({ type: 'node', id: item.nodeIds[0] })}><span>{item.severity === 'warning' ? '警告' : '情報'}</span>{item.message}</li>)}</ul> : <div className="check-success">現在の構成にMVP対象の警告はありません。</div>}
       </section>
-      </> : viewServer ? <ScaleView server={viewServer} view={view} showDesignNotes={showDesignNotes} onNavigate={setView} onUpdateServer={updateServer} onUpdateMiddleware={updateMiddleware} onUpdateRuntime={updateRuntime} onAddRuntime={addRuntime} onDeleteRuntime={deleteRuntime} onAddMiddleware={addMiddleware} onDeleteMiddleware={deleteMiddleware} /> : <section className="scale-screen panel"><h2>対象のサーバーが見つかりません。</h2><button onClick={() => setView({ level: 1 })}>全体構成図へ戻る</button></section>}
+      </> : viewServer ? <ScaleView server={viewServer} view={view} showDesignNotes={showDesignNotes} onNavigate={setView} onUpdateServer={updateServer} onUpdateHostnameAlias={updateHostnameAlias} onAddHostnameAlias={addHostnameAlias} onDeleteHostnameAlias={deleteHostnameAlias} onUpdateNetworkInterface={updateNetworkInterface} onAddNetworkInterface={addNetworkInterface} onDeleteNetworkInterface={deleteNetworkInterface} onUpdateSelinuxServiceSetting={updateSelinuxServiceSetting} onAddSelinuxServiceSetting={addSelinuxServiceSetting} onDeleteSelinuxServiceSetting={deleteSelinuxServiceSetting} onUpdateMiddleware={updateMiddleware} onUpdateRuntime={updateRuntime} onAddRuntime={addRuntime} onDeleteRuntime={deleteRuntime} onAddMiddleware={addMiddleware} onDeleteMiddleware={deleteMiddleware} /> : <section className="scale-screen panel"><h2>対象のサーバーが見つかりません。</h2><button onClick={() => setView({ level: 1 })}>全体構成図へ戻る</button></section>}
     </main>
   )
 }
 
-function ScaleView({ server, view, showDesignNotes, onNavigate, onUpdateServer, onUpdateMiddleware, onUpdateRuntime, onAddRuntime, onDeleteRuntime, onAddMiddleware, onDeleteMiddleware }: {
+function ScaleView({ server, view, showDesignNotes, onNavigate, onUpdateServer, onUpdateHostnameAlias, onAddHostnameAlias, onDeleteHostnameAlias, onUpdateNetworkInterface, onAddNetworkInterface, onDeleteNetworkInterface, onUpdateSelinuxServiceSetting, onAddSelinuxServiceSetting, onDeleteSelinuxServiceSetting, onUpdateMiddleware, onUpdateRuntime, onAddRuntime, onDeleteRuntime, onAddMiddleware, onDeleteMiddleware }: {
   server: Node<DeviceData>
   view: Exclude<View, { level: 1 }>
   showDesignNotes: boolean
   onNavigate: (view: View) => void
   onUpdateServer: (serverId: string, field: EditableField, value: string) => void
+  onUpdateHostnameAlias: (serverId: string, index: number, value: string) => void
+  onAddHostnameAlias: (serverId: string) => void
+  onDeleteHostnameAlias: (serverId: string, index: number) => void
+  onUpdateNetworkInterface: (serverId: string, interfaceId: string, field: Exclude<keyof NetworkInterface, 'id'>, value: string) => void
+  onAddNetworkInterface: (serverId: string) => void
+  onDeleteNetworkInterface: (serverId: string, interfaceId: string) => void
+  onUpdateSelinuxServiceSetting: (serverId: string, settingId: string, field: Exclude<keyof SelinuxServiceSetting, 'id'>, value: string) => void
+  onAddSelinuxServiceSetting: (serverId: string) => void
+  onDeleteSelinuxServiceSetting: (serverId: string, settingId: string) => void
   onUpdateMiddleware: (serverId: string, middlewareId: string, field: MiddlewareField, value: string) => void
   onUpdateRuntime: (serverId: string, middlewareId: string, runtimeId: string, field: 'name' | 'version', value: string) => void
   onAddRuntime: (serverId: string, middlewareId: string) => void
@@ -1640,11 +1796,11 @@ function ScaleView({ server, view, showDesignNotes, onNavigate, onUpdateServer, 
     : undefined
 
   if (view.level === 4) {
-    const allServerFields: Array<[EditableField, string]> = [['displayName', '表示名'], ['deploymentType', '配置形態'], ['platformProvider', profile.provider], ['platformLocation', profile.location], ['platformResource', profile.resource], ['platformDetail', profile.detail], ['hostname', 'ホスト名'], ['ipAddress', 'IPアドレス'], ['osName', 'OS名'], ['osVersion', 'OSバージョン'], ['cpu', 'CPU'], ['memory', 'メモリ'], ['disk', 'ディスク'], ['dbUsage', 'DB使用有無'], ['dbType', 'DB種別・サービス'], ['dbVersion', 'DBバージョン'], ['backupMethod', 'バックアップ方式・サービス'], ['backupSchedule', 'バックアップ実行頻度'], ['backupRetention', 'バックアップ保持期間'], ['backupDestination', 'バックアップ保存先'], ['recoveryTarget', '復旧目標（RPO / RTO）'], ['restoreTest', '復元テスト'], ['monitoringMethod', '監視・ログ方法'], ['logRetention', 'ログ保存期間'], ['purpose', '用途'], ['notes', '備考']]
+    const allServerFields: Array<[EditableField, string]> = [['displayName', '表示名'], ['deploymentType', '配置形態'], ['platformProvider', profile.provider], ['platformLocation', profile.location], ['platformResource', profile.resource], ['platformDetail', profile.detail], ['hostname', '主ホスト名'], ['osFamily', 'OS分類'], ['osName', 'OS名'], ['osVersion', 'OSバージョン'], ['cpu', 'CPU'], ['memory', 'メモリ'], ['disk', 'ディスク'], ['dbUsage', 'DB使用有無'], ['dbType', 'DB種別・サービス'], ['dbVersion', 'DBバージョン'], ['backupMethod', 'バックアップ方式・サービス'], ['backupSchedule', 'バックアップ実行頻度'], ['backupRetention', 'バックアップ保持期間'], ['backupDestination', 'バックアップ保存先'], ['recoveryTarget', '復旧目標（RPO / RTO）'], ['restoreTest', '復元テスト'], ['monitoringMethod', '監視・ログ方法'], ['logRetention', 'ログ保存期間'], ['purpose', '用途'], ['notes', '備考']]
     const sectionLabels: Record<LevelFourSection, string> = { os: 'OS', network: 'ネットワーク', storage: 'ストレージ・データ', database: 'データベース', backup: 'バックアップ・復旧', monitoring: '監視・ログ' }
     const sectionFields: Record<LevelFourSection, Array<[EditableField, string]>> = {
-      os: [['hostname', 'ホスト名'], ['osName', 'OS名'], ['osVersion', 'OSバージョン']],
-      network: [['ipAddress', 'IPアドレス'], ['managementIpAddress', '管理IPアドレス']],
+      os: [['hostname', '主ホスト名'], ['osFamily', 'OS分類'], ['osName', 'OS名'], ['osVersion', 'OSバージョン']],
+      network: [['ipAddress', 'IPアドレス']],
       storage: [['disk', 'ディスク'], ['purpose', '用途']],
       database: [['dbUsage', 'DB使用有無'], ['dbType', 'DB種別・サービス'], ['dbVersion', 'DBバージョン']],
       backup: [['backupMethod', 'バックアップ方式・サービス'], ['backupSchedule', 'バックアップ実行頻度'], ['backupRetention', 'バックアップ保持期間'], ['backupDestination', 'バックアップ保存先'], ['recoveryTarget', '復旧目標（RPO / RTO）'], ['restoreTest', '復元テスト']],
@@ -1656,7 +1812,12 @@ function ScaleView({ server, view, showDesignNotes, onNavigate, onUpdateServer, 
       <div className="scale-heading"><div><p className="eyebrow">LEVEL 4</p><h2>設定・パラメータ</h2><p>{selectedMiddleware ? `${selectedMiddleware.name} の設定値` : view.section ? `${data.displayName} / ${sectionLabels[view.section]} の詳細` : `${data.displayName} の基本パラメータ`}</p></div><button onClick={() => onNavigate(selectedMiddleware ? { level: 3, serverId: server.id, middlewareId: selectedMiddleware.id } : { level: 2, serverId: server.id })}>{selectedMiddleware ? 'サービス詳細へ戻る' : '詳細図へ戻る'}</button></div>
       {showDesignNotes && <DesignNotePanel level="レベル4" description="設定値の意図、変更時の注意、未確定事項を残します。" value={data.level4Note} onChange={(value) => onUpdateServer(server.id, 'level4Note', value)} />}
       <p className="edit-hint">ここで編集した値は、全体構成図・詳細図・一覧・出力へ同時に反映されます。</p>
-      <table className="parameter-table"><tbody>{selectedMiddleware ? <><tr><th>実行言語・ランタイム</th><td>{runtimeLabel(selectedMiddleware.runtimes, '未設定')}</td></tr>{middlewareFields.map(([field, label]) => <tr key={field}><th>{label}</th><td>{field === 'configurationNote' ? <textarea value={selectedMiddleware[field]} onChange={(event) => onUpdateMiddleware(server.id, selectedMiddleware.id, field, event.target.value)} rows={3} /> : <input value={selectedMiddleware[field]} onChange={(event) => onUpdateMiddleware(server.id, selectedMiddleware.id, field, event.target.value)} />}</td></tr>)}</> : serverFields.map(([field, label]) => <tr key={field}><th>{label}</th><td>{field === 'notes' ? <textarea value={data[field]} onChange={(event) => onUpdateServer(server.id, field, event.target.value)} rows={3} /> : <input value={data[field]} onChange={(event) => onUpdateServer(server.id, field, event.target.value)} />}</td></tr>)}</tbody></table>
+      <table className="parameter-table"><tbody>{selectedMiddleware ? <><tr><th>実行言語・ランタイム</th><td>{runtimeLabel(selectedMiddleware.runtimes, '未設定')}</td></tr>{middlewareFields.map(([field, label]) => <tr key={field}><th>{label}</th><td>{field === 'configurationNote' ? <textarea value={selectedMiddleware[field]} onChange={(event) => onUpdateMiddleware(server.id, selectedMiddleware.id, field, event.target.value)} rows={3} /> : <input value={selectedMiddleware[field]} onChange={(event) => onUpdateMiddleware(server.id, selectedMiddleware.id, field, event.target.value)} />}</td></tr>)}</> : serverFields.map(([field, label]) => <tr key={field}><th>{label}</th><td>{field === 'osFamily' ? <select value={data.osFamily} onChange={(event) => onUpdateServer(server.id, field, event.target.value)}><option value="">選択してください</option>{osFamilyOptions.map((option) => <option key={option} value={option}>{option}</option>)}</select> : field === 'notes' ? <textarea value={data[field]} onChange={(event) => onUpdateServer(server.id, field, event.target.value)} rows={3} /> : <input value={data[field]} onChange={(event) => onUpdateServer(server.id, field, event.target.value)} />}</td></tr>)}</tbody></table>
+      {!selectedMiddleware && view.section === 'os' && data.osFamily === 'Linux' && <section className="list-editor linux-settings"><div className="list-editor-heading"><div><h3>Linux固有の設定</h3><p>ディストリビューション差や運用に影響する項目を登録します。</p></div></div><div className="linux-settings-grid"><label>ディストリビューション<input value={data.linuxDistribution} onChange={(event) => onUpdateServer(server.id, 'linuxDistribution', event.target.value)} placeholder="例: RHEL / Ubuntu" /></label><label>カーネルバージョン<input value={data.linuxKernelVersion} onChange={(event) => onUpdateServer(server.id, 'linuxKernelVersion', event.target.value)} placeholder="例: 5.14" /></label><label>initシステム<input value={data.linuxInitSystem} onChange={(event) => onUpdateServer(server.id, 'linuxInitSystem', event.target.value)} placeholder="例: systemd" /></label><label>パッケージ管理<input value={data.linuxPackageManager} onChange={(event) => onUpdateServer(server.id, 'linuxPackageManager', event.target.value)} placeholder="例: dnf / apt" /></label><label>標準ファイルシステム<input value={data.linuxFileSystem} onChange={(event) => onUpdateServer(server.id, 'linuxFileSystem', event.target.value)} placeholder="例: XFS / ext4" /></label><label>セキュリティ機構<select value={data.linuxSecurityTool} onChange={(event) => onUpdateServer(server.id, 'linuxSecurityTool', event.target.value)}><option value="">選択してください</option>{linuxSecurityToolOptions.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>{['SELinux', 'AppArmor'].includes(data.linuxSecurityTool) && <label>状態<select value={data.linuxSecurityState} onChange={(event) => onUpdateServer(server.id, 'linuxSecurityState', event.target.value)}><option value="">選択してください</option>{linuxSecurityStateOptions.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>}<label>ログ基盤<input value={data.linuxLogging} onChange={(event) => onUpdateServer(server.id, 'linuxLogging', event.target.value)} placeholder="例: systemd-journald" /></label></div>{data.linuxSecurityTool === 'SELinux' && data.linuxSecurityState === '有効' && <div className="linux-security-detail"><h4>SELinux 詳細設定</h4><div className="linux-settings-grid"><label>モード<select value={data.selinuxMode} onChange={(event) => onUpdateServer(server.id, 'selinuxMode', event.target.value)}><option value="">選択してください</option><option value="Enforcing">Enforcing</option><option value="Permissive">Permissive</option></select></label><label>ポリシー種別<input value={data.selinuxPolicy} onChange={(event) => onUpdateServer(server.id, 'selinuxPolicy', event.target.value)} placeholder="例: targeted" /></label><label>追加モジュール・boolean<input value={data.selinuxRules} onChange={(event) => onUpdateServer(server.id, 'selinuxRules', event.target.value)} placeholder="例: httpd_can_network_connect_db" /></label><label>例外対象のサービス・パス<input value={data.selinuxExceptions} onChange={(event) => onUpdateServer(server.id, 'selinuxExceptions', event.target.value)} placeholder="例: /srv/app / nginx" /></label><label>監査ログ確認先<input value={data.selinuxAuditLog} onChange={(event) => onUpdateServer(server.id, 'selinuxAuditLog', event.target.value)} placeholder="例: /var/log/audit/audit.log" /></label></div></div>}{data.linuxSecurityTool === 'AppArmor' && data.linuxSecurityState === '有効' && <div className="linux-security-detail"><h4>AppArmor 詳細設定</h4><div className="linux-settings-grid"><label>モード<select value={data.appArmorMode} onChange={(event) => onUpdateServer(server.id, 'appArmorMode', event.target.value)}><option value="">選択してください</option><option value="Enforce">Enforce</option><option value="Complain">Complain</option></select></label><label>プロファイル運用方針<input value={data.appArmorProfilePolicy} onChange={(event) => onUpdateServer(server.id, 'appArmorProfilePolicy', event.target.value)} placeholder="例: 標準プロファイル＋個別追加" /></label><label>追加・変更プロファイル<input value={data.appArmorProfiles} onChange={(event) => onUpdateServer(server.id, 'appArmorProfiles', event.target.value)} placeholder="例: usr.sbin.nginx" /></label><label>例外対象のサービス・パス<input value={data.appArmorExceptions} onChange={(event) => onUpdateServer(server.id, 'appArmorExceptions', event.target.value)} placeholder="例: /srv/app" /></label><label>ログ確認先<input value={data.appArmorLog} onChange={(event) => onUpdateServer(server.id, 'appArmorLog', event.target.value)} placeholder="例: journalctl -k" /></label></div></div>}</section>}
+      {!selectedMiddleware && view.section === 'os' && data.osFamily === 'Linux' && data.linuxSecurityTool === 'SELinux' && data.linuxSecurityState === '有効' && <section className="list-editor selinux-design-section"><div className="list-editor-heading"><div><h3>SELinux 基本・運用設定</h3><p>起動時の有効化状態、管理ツール、拒否ログの確認方針を記録します。</p></div></div><div className="linux-settings-grid"><label>起動時の有効化状態<select value={data.selinuxBootStatus} onChange={(event) => onUpdateServer(server.id, 'selinuxBootStatus', event.target.value)}><option value="">選択してください</option><option value="無効化指定なし">無効化指定なし</option><option value="selinux=0 指定あり">selinux=0 指定あり</option><option value="未確認">未確認</option></select></label><label>ポリシー・管理ツール<input value={data.selinuxManagementTools} onChange={(event) => onUpdateServer(server.id, 'selinuxManagementTools', event.target.value)} placeholder="例: policycoreutils / semanage" /></label><label>拒否ログ・auditd<input value={data.selinuxAuditd} onChange={(event) => onUpdateServer(server.id, 'selinuxAuditd', event.target.value)} placeholder="例: auditd 有効、ausearchで確認" /></label><label>個別Permissiveドメイン<input value={data.selinuxPermissiveDomains} onChange={(event) => onUpdateServer(server.id, 'selinuxPermissiveDomains', event.target.value)} placeholder="例: なし / semanage permissive -l" /></label></div><div className="selinux-advanced"><h4>高度な設定（必要時のみ）</h4><div className="linux-settings-grid"><label>ユーザー・ロール対応<input value={data.selinuxUserRole} onChange={(event) => onUpdateServer(server.id, 'selinuxUserRole', event.target.value)} placeholder="例: 未使用 / semanage login" /></label><label>独自ポリシー・モジュール<input value={data.selinuxCustomPolicy} onChange={(event) => onUpdateServer(server.id, 'selinuxCustomPolicy', event.target.value)} placeholder="例: なし / custom_web_policy" /></label></div></div></section>}
+      {!selectedMiddleware && view.section === 'os' && data.osFamily === 'Linux' && data.linuxSecurityTool === 'SELinux' && data.linuxSecurityState === '有効' && <section className="list-editor selinux-design-section"><div className="list-editor-heading"><div><h3>SELinux サービス別設定</h3><p>対象サービス、ラベル・Boolean・ポートなどを行単位で管理します。確認コマンドは区分から自動表示されます。</p></div><button type="button" className="add-runtime" onClick={() => onAddSelinuxServiceSetting(server.id)}>＋ 設定を追加</button></div>{data.selinuxServiceSettings.length ? data.selinuxServiceSettings.map((item) => <div className="selinux-service-row" key={item.id}><label>対象サービス<select value={item.serviceId} onChange={(event) => onUpdateSelinuxServiceSetting(server.id, item.id, 'serviceId', event.target.value)}><option value="">OS共通／未指定</option>{data.middleware.map((middleware) => <option key={middleware.id} value={middleware.id}>{middleware.name || '名称未設定'}</option>)}</select></label><label>区分<select value={item.category} onChange={(event) => onUpdateSelinuxServiceSetting(server.id, item.id, 'category', event.target.value)}>{['ファイル・ディレクトリのラベル', 'ポートのラベル', 'Boolean', 'プロセスのドメイン', '共有領域・コンテナのラベル'].map((category) => <option key={category} value={category}>{category}</option>)}</select></label><label>対象<input value={item.target} onChange={(event) => onUpdateSelinuxServiceSetting(server.id, item.id, 'target', event.target.value)} placeholder="例: /srv/app / 8443/tcp" /></label><label>設定内容・想定ラベル<input value={item.desiredValue} onChange={(event) => onUpdateSelinuxServiceSetting(server.id, item.id, 'desiredValue', event.target.value)} placeholder="例: httpd_sys_content_t" /></label><label>状態<select value={item.status} onChange={(event) => onUpdateSelinuxServiceSetting(server.id, item.id, 'status', event.target.value)}>{['設定済み', '未設定', '要確認'].map((status) => <option key={status} value={status}>{status}</option>)}</select></label><label>確認コマンド<input value={item.verificationCommand} onChange={(event) => onUpdateSelinuxServiceSetting(server.id, item.id, 'verificationCommand', event.target.value)} /></label><label>備考<input value={item.notes} onChange={(event) => onUpdateSelinuxServiceSetting(server.id, item.id, 'notes', event.target.value)} /></label><button type="button" className="text-button danger" onClick={() => onDeleteSelinuxServiceSetting(server.id, item.id)}>削除</button></div>) : <p className="list-editor-empty">サービス別の設定は未登録です。</p>}</section>}
+      {!selectedMiddleware && view.section === 'os' && <section className="list-editor"><div className="list-editor-heading"><div><h3>ホスト名の別名</h3><p>DNS別名、クラスタ名、サービス名などを必要な分だけ登録します。</p></div><button type="button" className="add-runtime" onClick={() => onAddHostnameAlias(server.id)}>＋ 別名を追加</button></div>{data.hostnameAliases.length ? data.hostnameAliases.map((alias, index) => <div className="list-editor-row" key={index}><input value={alias} onChange={(event) => onUpdateHostnameAlias(server.id, index, event.target.value)} placeholder="例: web.example.jp" aria-label="ホスト名の別名" /><button type="button" className="text-button danger" onClick={() => onDeleteHostnameAlias(server.id, index)}>削除</button></div>) : <p className="list-editor-empty">別名は未登録です。</p>}</section>}
+      {!selectedMiddleware && view.section === 'network' && <section className="list-editor"><div className="list-editor-heading"><div><h3>追加IPアドレス</h3><p>業務、管理、バックアップ、ストレージ、IPv6、VIPなどを用途とともに必要な分だけ登録します。</p></div><button type="button" className="add-runtime" onClick={() => onAddNetworkInterface(server.id)}>＋ 追加IPを登録</button></div>{data.networkInterfaces.length ? data.networkInterfaces.map((item) => <div className="network-interface-editor" key={item.id}><label>用途<input value={item.purpose} onChange={(event) => onUpdateNetworkInterface(server.id, item.id, 'purpose', event.target.value)} placeholder="例: 管理" /></label><label>IPアドレス<input value={item.ipAddress} onChange={(event) => onUpdateNetworkInterface(server.id, item.id, 'ipAddress', event.target.value)} placeholder="例: 10.0.1.10" /></label><label>IF名<input value={item.name} onChange={(event) => onUpdateNetworkInterface(server.id, item.id, 'name', event.target.value)} placeholder="例: eth1" /></label><label>サブネット<input value={item.subnet} onChange={(event) => onUpdateNetworkInterface(server.id, item.id, 'subnet', event.target.value)} placeholder="例: /24" /></label><label>ゲートウェイ<input value={item.gateway} onChange={(event) => onUpdateNetworkInterface(server.id, item.id, 'gateway', event.target.value)} placeholder="例: 10.0.1.1" /></label><button type="button" className="text-button danger" onClick={() => onDeleteNetworkInterface(server.id, item.id)}>削除</button></div>) : <p className="list-editor-empty">追加IPは未登録です。</p>}</section>}
     </section>
   }
 
@@ -1701,7 +1862,7 @@ function ScaleView({ server, view, showDesignNotes, onNavigate, onUpdateServer, 
         </div>
         <section className="category-section os-category">
           <div className="category-heading"><div><span className="category-kicker">CATEGORY 03</span><h3>OS</h3></div><button type="button" className="category-detail-button" onClick={() => onNavigate({ level: 4, serverId: server.id, section: 'os' })}>詳細を表示</button></div>
-          <div className="level-two-fields"><label>ホスト名<input value={data.hostname} onChange={(event) => onUpdateServer(server.id, 'hostname', event.target.value)} /></label><label>IPアドレス<input value={data.ipAddress} onChange={(event) => onUpdateServer(server.id, 'ipAddress', event.target.value)} /></label><label>OS名<input value={data.osName} onChange={(event) => onUpdateServer(server.id, 'osName', event.target.value)} /></label><label>OSバージョン<input value={data.osVersion} onChange={(event) => onUpdateServer(server.id, 'osVersion', event.target.value)} /></label></div>
+          <div className="level-two-fields"><label>主ホスト名<input value={data.hostname} onChange={(event) => onUpdateServer(server.id, 'hostname', event.target.value)} /></label><label>ホスト名の別名<input value={data.hostnameAliases.join(', ')} readOnly placeholder="詳細画面で追加" /></label><label>OS分類<select value={data.osFamily} onChange={(event) => onUpdateServer(server.id, 'osFamily', event.target.value)}><option value="">選択してください</option>{osFamilyOptions.map((option) => <option value={option} key={option}>{option}</option>)}</select></label><label>OS名<input value={data.osName} onChange={(event) => onUpdateServer(server.id, 'osName', event.target.value)} placeholder="例: RHEL / Windows Server" /></label><label>OSバージョン<input value={data.osVersion} onChange={(event) => onUpdateServer(server.id, 'osVersion', event.target.value)} /></label>{data.osFamily === 'Linux' && <><label>ディストリビューション<input value={data.linuxDistribution} onChange={(event) => onUpdateServer(server.id, 'linuxDistribution', event.target.value)} placeholder="例: RHEL" /></label><label>カーネル<input value={data.linuxKernelVersion} onChange={(event) => onUpdateServer(server.id, 'linuxKernelVersion', event.target.value)} placeholder="例: 5.14" /></label><section className="linux-security-summary"><span>セキュリティ設定</span><div><label>機構<select value={data.linuxSecurityTool} onChange={(event) => onUpdateServer(server.id, 'linuxSecurityTool', event.target.value)}><option value="">選択してください</option>{linuxSecurityToolOptions.map((option) => <option value={option} key={option}>{option}</option>)}</select></label>{['SELinux', 'AppArmor'].includes(data.linuxSecurityTool) && <label>状態<select value={data.linuxSecurityState} onChange={(event) => onUpdateServer(server.id, 'linuxSecurityState', event.target.value)}><option value="">選択してください</option>{linuxSecurityStateOptions.map((option) => <option value={option} key={option}>{option}</option>)}</select></label>}</div></section></>}</div>
         </section>
         <section className="category-section middleware-category">
           <div className="category-heading"><div><span className="category-kicker">CATEGORY 04</span><h3>MW・アプリケーション</h3></div><p>クリックしてレベル3の詳細へ</p></div>
@@ -1711,7 +1872,7 @@ function ScaleView({ server, view, showDesignNotes, onNavigate, onUpdateServer, 
           </div>
         </section>
         <div className="category-bottom-grid">
-          <section className="category-section network-category"><div className="category-heading"><div><span className="category-kicker">CATEGORY 05</span><h3>ネットワーク</h3></div><button type="button" className="category-detail-button" onClick={() => onNavigate({ level: 4, serverId: server.id, section: 'network' })}>詳細を表示</button></div><div className="compact-fields"><label>インターフェース<input value="eth0" readOnly /></label><label>管理IP<input value={data.managementIpAddress} onChange={(event) => onUpdateServer(server.id, 'managementIpAddress', event.target.value)} placeholder="未設定" /></label></div></section>
+          <section className="category-section network-category"><div className="category-heading"><div><span className="category-kicker">CATEGORY 05</span><h3>ネットワーク</h3></div><button type="button" className="category-detail-button" onClick={() => onNavigate({ level: 4, serverId: server.id, section: 'network' })}>詳細を表示</button></div><div className="compact-fields"><label>IPアドレス<input value={data.ipAddress} onChange={(event) => onUpdateServer(server.id, 'ipAddress', event.target.value)} placeholder="例: 192.168.10.11" /></label><label>追加IP<input value={data.networkInterfaces.length ? `${data.networkInterfaces.length} 件登録` : '未登録'} readOnly /></label></div></section>
           <section className="category-section database-category"><div className="category-heading"><div><span className="category-kicker">CATEGORY 07</span><h3>データベース</h3></div><button type="button" className="category-detail-button" onClick={() => onNavigate({ level: 4, serverId: server.id, section: 'database' })}>詳細を表示</button></div><div className="compact-fields"><label>DB使用有無<select value={data.dbUsage} onChange={(event) => onUpdateServer(server.id, 'dbUsage', event.target.value)}><option value="使用する">使用する</option><option value="使用しない">使用しない</option><option value="検討中">検討中</option></select></label><label>DB種別・サービス<input value={data.dbType} onChange={(event) => onUpdateServer(server.id, 'dbType', event.target.value)} placeholder="例: Amazon RDS for PostgreSQL" disabled={data.dbUsage === '使用しない'} /></label><label>DBバージョン<input value={data.dbVersion} onChange={(event) => onUpdateServer(server.id, 'dbVersion', event.target.value)} placeholder="例: 16.4" disabled={data.dbUsage === '使用しない'} /></label></div></section>
           <section className="category-section backup-category"><div className="category-heading"><div><span className="category-kicker">CATEGORY 08</span><h3>バックアップ・復旧</h3></div><button type="button" className="category-detail-button" onClick={() => onNavigate({ level: 4, serverId: server.id, section: 'backup' })}>詳細を表示</button></div><div className="compact-fields"><label>方式・サービス<input value={data.backupMethod} onChange={(event) => onUpdateServer(server.id, 'backupMethod', event.target.value)} placeholder="例: AWS Backup / RDS自動バックアップ" /></label><label>保持期間<input value={data.backupRetention} onChange={(event) => onUpdateServer(server.id, 'backupRetention', event.target.value)} placeholder="例: 35日" /></label></div></section>
           <section className="category-section monitoring-category"><div className="category-heading"><div><span className="category-kicker">CATEGORY 09</span><h3>監視・ログ</h3></div><button type="button" className="category-detail-button" onClick={() => onNavigate({ level: 4, serverId: server.id, section: 'monitoring' })}>詳細を表示</button></div><div className="compact-fields"><label>方法<input value={data.monitoringMethod} onChange={(event) => onUpdateServer(server.id, 'monitoringMethod', event.target.value)} placeholder="例: CloudWatch + SNS通知" /></label><label>ログ保存期間<input value={data.logRetention} onChange={(event) => onUpdateServer(server.id, 'logRetention', event.target.value)} placeholder="例: 90日 / S3へ1年保管" /></label></div></section>
