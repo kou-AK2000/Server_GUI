@@ -830,6 +830,49 @@ function levelTwoDiagramSvg(server: Node<DeviceData>) {
   return { width, height, svg: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="#f8fbff"/><rect x="20" y="18" width="820" height="${height - 36}" rx="12" fill="#ffffff" stroke="#86a9d7" stroke-width="3"/><rect x="40" y="38" width="780" height="42" rx="7" fill="#e2eefc" stroke="#7d9fc8"/><text x="56" y="64" fill="#214f83" font-family="Arial, sans-serif" font-size="17" font-weight="700">サーバー / VM　${title}</text><rect x="40" y="98" width="780" height="88" rx="8" fill="#f5fcfc" stroke="#8ac4c8"/><text x="56" y="124" fill="#245d63" font-family="Arial, sans-serif" font-size="15" font-weight="700">配置・実行基盤: ${escapeXml(data.deploymentType || '未設定')}</text><text x="56" y="151" fill="#334155" font-family="Arial, sans-serif" font-size="13">${escapeXml(profile.provider)}: ${escapeXml(data.platformProvider || '未設定')}　/　${escapeXml(profile.location)}: ${escapeXml(data.platformLocation || '未設定')}</text><text x="56" y="174" fill="#334155" font-family="Arial, sans-serif" font-size="13">${escapeXml(profile.resource)}: ${escapeXml(data.platformResource || '未設定')}　/　${escapeXml(profile.detail)}: ${escapeXml(data.platformDetail || '未設定')}</text>${card(40, 202, 370, 'CPU・メモリ', [`CPU: ${data.cpu || '未設定'}`, `メモリ: ${data.memory || '未設定'}`], '#f8fbff', '#b8cde5')}${card(430, 202, 390, 'ストレージ・データ', [`ディスク: ${data.disk || '未設定'}`, data.purpose || '用途未設定'], '#fffdf7', '#e4d09e')}${card(40, osY, 780, 'OS', [`${data.osName} ${data.osVersion}`.trim() || '未設定', `主ホスト名: ${data.hostname || '未設定'}${data.hostnameAliases.length ? ` / 別名 ${data.hostnameAliases.length}件` : ''}`], '#f7fcf8', '#a8d0b6')}<rect x="40" y="${middlewareY}" width="780" height="${serviceRows * 84 + 36}" rx="8" fill="#fbf9ff" stroke="#d5c5ef"/><text x="56" y="${middlewareY + 26}" fill="#4c317f" font-family="Arial, sans-serif" font-size="15" font-weight="700">MW・アプリケーション</text>${services}${card(40, lowerY, 370, 'ネットワーク', [`IPアドレス: ${data.ipAddress || '未設定'}`, `追加IP: ${data.networkInterfaces.length}件`], '#f7fcff', '#b6d6e9')}${card(430, lowerY, 390, 'データベース', [data.dbUsage || '未設定', [data.dbType, data.dbVersion].filter(Boolean).join(' / ') || '種別・バージョン未設定'], '#fbf9ff', '#c5b4e4')}${card(40, databaseY, 370, 'バックアップ・復旧', [data.backupMethod || '方式未設定', `保持期間: ${data.backupRetention || '未設定'}`], '#fbf9ff', '#c6b6e6')}${card(430, databaseY, 390, '監視・ログ', [data.monitoringMethod || '方法未設定', `ログ保存期間: ${data.logRetention || '未設定'}`], '#f5fcfb', '#9dc9c8')}</svg>` }
 }
 
+function levelThreeDiagramSvg(servers: Node<DeviceData>[]) {
+  const width = 860
+  const columns = 3
+  const cardWidth = 232
+  const cardHeight = 106
+  const rowGap = 14
+  const blockGap = 18
+  const serverBlockHeights = servers.map((server) => {
+    const rows = Math.max(1, Math.ceil(server.data.middleware.length / columns))
+    return 70 + rows * cardHeight + (rows - 1) * rowGap + 18
+  })
+  const height = 112 + (serverBlockHeights.reduce((total, blockHeight) => total + blockHeight, 0) || 96) + Math.max(0, servers.length - 1) * blockGap + 24
+  let currentY = 104
+  const serverBlocks = servers.length ? servers.map((server, serverIndex) => {
+    const { data } = server
+    const blockHeight = serverBlockHeights[serverIndex]
+    const services = data.middleware.length ? data.middleware.map((middleware, index) => {
+      const x = 56 + (index % columns) * 250
+      const y = currentY + 62 + Math.floor(index / columns) * (cardHeight + rowGap)
+      const runtime = runtimeLabel(middleware.runtimes, middleware.runtime) || '未設定'
+      return `<g><rect x="${x}" y="${y}" width="${cardWidth}" height="${cardHeight}" rx="8" fill="#ffffff" stroke="#bba4e6" stroke-width="2"/><text x="${x + 13}" y="${y + 23}" fill="#6b3fa0" font-family="Arial, sans-serif" font-size="11" font-weight="700">${escapeXml(middleware.category || '用途分類未設定')}</text><text x="${x + 13}" y="${y + 45}" fill="#2b3e58" font-family="Arial, sans-serif" font-size="15" font-weight="700">${escapeXml(middleware.name || '名称未設定')}</text><text x="${x + 13}" y="${y + 65}" fill="#5d7088" font-family="Arial, sans-serif" font-size="10.5">Ver: ${escapeXml(middleware.version || '未設定')}　Runtime: ${escapeXml(runtime)}</text><text x="${x + 13}" y="${y + 84}" fill="#5d7088" font-family="Arial, sans-serif" font-size="10.5">${escapeXml(middleware.executionMethod || '実行方式未設定')} / Port: ${escapeXml(middleware.port || '未設定')}</text></g>`
+    }).join('') : `<text x="56" y="${currentY + 96}" fill="#64748b" font-family="Arial, sans-serif" font-size="13">このサーバーにはMW・サービスが未登録です。</text>`
+    const header = `<rect x="40" y="${currentY}" width="780" height="${blockHeight}" rx="9" fill="#fbf9ff" stroke="#cdbbe9" stroke-width="2"/><rect x="40" y="${currentY}" width="780" height="46" rx="9" fill="#f0ebfc"/><text x="56" y="${currentY + 28}" fill="#573587" font-family="Arial, sans-serif" font-size="16" font-weight="700">${escapeXml(data.displayName || 'サーバー名未設定')}</text><text x="804" y="${currentY + 28}" fill="#6b7280" font-family="Arial, sans-serif" font-size="12" text-anchor="end">ホスト名: ${escapeXml(data.hostname || '未設定')}</text>`
+    currentY += blockHeight + blockGap
+    return `<g>${header}${services}</g>`
+  }).join('') : `<text x="40" y="140" fill="#64748b" font-family="Arial, sans-serif" font-size="14">サーバーは未登録です。</text>`
+  return { width, height, svg: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="#f8fbff"/><rect x="20" y="18" width="820" height="${height - 36}" rx="12" fill="#ffffff" stroke="#9f87cf" stroke-width="3"/><rect x="40" y="38" width="780" height="48" rx="7" fill="#eee8ff" stroke="#bba4e6"/><text x="56" y="68" fill="#5b3890" font-family="Arial, sans-serif" font-size="18" font-weight="700">レベル3　MW・サービス詳細（サーバー別）</text>${serverBlocks}</svg>` }
+}
+
+function levelFourDiagramSvg(servers: Node<DeviceData>[]) {
+  const width = 860
+  const blockHeight = 176
+  const height = 132 + Math.max(1, servers.length) * blockHeight
+  const blocks = servers.length ? servers.map((server, index) => {
+    const { data } = server
+    const y = 100 + index * blockHeight
+    const os = [data.osFamily, data.osName, data.osVersion].filter(Boolean).join(' / ') || '未設定'
+    const security = data.osFamily === 'Linux' ? [data.linuxSecurityTool, data.linuxSecurityState].filter(Boolean).join(' / ') || '未設定' : '対象外'
+    return `<g><rect x="40" y="${y}" width="780" height="146" rx="8" fill="#fbfdff" stroke="#a8c5df"/><text x="56" y="${y + 27}" fill="#214f83" font-family="Arial, sans-serif" font-size="16" font-weight="700">${escapeXml(data.displayName)}　設定・パラメータ</text><rect x="56" y="${y + 43}" width="235" height="82" rx="6" fill="#f7fcf8" stroke="#a8d0b6"/><text x="68" y="${y + 65}" fill="#315f50" font-family="Arial, sans-serif" font-size="12" font-weight="700">OS・セキュリティ</text><text x="68" y="${y + 86}" fill="#475569" font-family="Arial, sans-serif" font-size="11">${escapeXml(os)}</text><text x="68" y="${y + 107}" fill="#475569" font-family="Arial, sans-serif" font-size="11">${escapeXml(security)}</text><rect x="310" y="${y + 43}" width="235" height="82" rx="6" fill="#f7fcff" stroke="#b6d6e9"/><text x="322" y="${y + 65}" fill="#315f8e" font-family="Arial, sans-serif" font-size="12" font-weight="700">ネットワーク・データ</text><text x="322" y="${y + 86}" fill="#475569" font-family="Arial, sans-serif" font-size="11">IP: ${escapeXml(data.ipAddress || '未設定')}</text><text x="322" y="${y + 107}" fill="#475569" font-family="Arial, sans-serif" font-size="11">DB: ${escapeXml([data.dbUsage, data.dbType, data.dbVersion].filter(Boolean).join(' / ') || '未設定')}</text><rect x="564" y="${y + 43}" width="240" height="82" rx="6" fill="#fbf9ff" stroke="#c6b6e6"/><text x="576" y="${y + 65}" fill="#6b3fa0" font-family="Arial, sans-serif" font-size="12" font-weight="700">運用・復旧</text><text x="576" y="${y + 86}" fill="#475569" font-family="Arial, sans-serif" font-size="11">${escapeXml(data.backupMethod || 'バックアップ未設定')}</text><text x="576" y="${y + 107}" fill="#475569" font-family="Arial, sans-serif" font-size="11">${escapeXml(data.monitoringMethod || '監視未設定')}</text></g>`
+  }).join('') : `<text x="40" y="140" fill="#64748b" font-family="Arial, sans-serif" font-size="14">サーバーは未登録です。</text>`
+  return { width, height, svg: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="#f8fbff"/><rect x="20" y="18" width="820" height="${height - 36}" rx="12" fill="#ffffff" stroke="#7ea4cb" stroke-width="3"/><rect x="40" y="38" width="780" height="42" rx="7" fill="#e8f1fb" stroke="#9fbbd7"/><text x="56" y="65" fill="#214f83" font-family="Arial, sans-serif" font-size="18" font-weight="700">レベル4　設定・パラメータ</text>${blocks}</svg>` }
+}
+
 function normalizeNodes(nodes: Node<DeviceData>[]) {
   return nodes.map((node) => {
     const data = node.data
@@ -869,8 +912,10 @@ export default function App() {
   const [historyRevision, setHistoryRevision] = useState(0)
   const [savedProjects, setSavedProjects] = useState<StoredProject[]>(readBrowserProjects)
   const [showProjectLibrary, setShowProjectLibrary] = useState(false)
+  const [showValidationDialog, setShowValidationDialog] = useState(false)
+  const [showHelpDialog, setShowHelpDialog] = useState(false)
   const [saveMessage, setSaveMessage] = useState('')
-  const [openMenu, setOpenMenu] = useState<'file' | 'export' | 'edit' | 'view' | 'layout' | null>(null)
+  const [openMenu, setOpenMenu] = useState<'file' | 'export' | 'edit' | 'view' | 'layout' | 'help' | null>(null)
   const [panelWidths, setPanelWidths] = useState({ palette: 200, properties: 272 })
   const [workspaceHeight, setWorkspaceHeight] = useState(544)
   const fileInput = useRef<HTMLInputElement>(null)
@@ -1098,7 +1143,7 @@ export default function App() {
         style: { borderColor: kindColors[kind] },
         },
       ] as Node<DeviceData>[]
-      return layoutTemplate === 'blank' ? next : arrangeNodesForTemplate(layoutTemplate, next, edges)
+      return next
     })
     setSelection({ type: 'node', id })
   }
@@ -1611,11 +1656,19 @@ export default function App() {
 
       const level3 = workbook.addWorksheet('レベル3_MWサービス')
       setupSheet(level3, 'レベル3 MW・サービス詳細', [20, 18, 22, 22, 20, 18, 16, 16, 32, 32, 40])
-      addTable(level3, 4, 'MW・サービス一覧', ['サーバー名', 'ホスト名', '用途分類', 'サービス名', '実行環境', 'ランタイムバージョン', 'フレームワーク', '実行方式', 'サービスバージョン', 'ポート', 'リポジトリ／イメージ', '設定ファイル', '設定メモ', '設計メモ'], servers.flatMap((node) => node.data.middleware.flatMap((middleware) => (middleware.runtimes.length ? middleware.runtimes : [{ name: middleware.runtime, version: '' }]).map((runtime) => [node.data.displayName, node.data.hostname, middleware.category, middleware.name, runtime.name, runtime.version, middleware.framework, middleware.executionMethod, middleware.version, middleware.port, middleware.repository, middleware.configurationPath, middleware.configurationNote, middleware.level3Note]))))
+      const level3Image = levelThreeDiagramSvg(servers)
+      const level3ImageId = workbook.addImage({ base64: await svgToPng(level3Image.svg, level3Image.width, level3Image.height), extension: 'png' })
+      level3.addImage(level3ImageId, { tl: { col: 1, row: 2 }, ext: { width: 760, height: Math.round(760 * level3Image.height / level3Image.width) } })
+      const level3Row = 4 + Math.ceil((760 * level3Image.height / level3Image.width) / 20)
+      addTable(level3, level3Row, 'MW・サービス一覧', ['サーバー名', 'ホスト名', '用途分類', 'サービス名', '実行環境', 'ランタイムバージョン', 'フレームワーク', '実行方式', 'サービスバージョン', 'ポート', 'リポジトリ／イメージ', '設定ファイル', '設定メモ', '設計メモ'], servers.flatMap((node) => node.data.middleware.flatMap((middleware) => (middleware.runtimes.length ? middleware.runtimes : [{ name: middleware.runtime, version: '' }]).map((runtime) => [node.data.displayName, node.data.hostname, middleware.category, middleware.name, runtime.name, runtime.version, middleware.framework, middleware.executionMethod, middleware.version, middleware.port, middleware.repository, middleware.configurationPath, middleware.configurationNote, middleware.level3Note]))))
 
       const level4 = workbook.addWorksheet('レベル4_設定パラメータ')
       setupSheet(level4, 'レベル4 設定・パラメータ', [16, 20, 22, 20, 20, 42])
-      addTable(level4, 4, '設定・パラメータ一覧', ['対象区分', 'サーバー名', 'サービス名', 'カテゴリ', 'パラメータ', '値'], servers.flatMap((node) => [
+      const level4Image = levelFourDiagramSvg(servers)
+      const level4ImageId = workbook.addImage({ base64: await svgToPng(level4Image.svg, level4Image.width, level4Image.height), extension: 'png' })
+      level4.addImage(level4ImageId, { tl: { col: 1, row: 2 }, ext: { width: 760, height: Math.round(760 * level4Image.height / level4Image.width) } })
+      const level4Row = 4 + Math.ceil((760 * level4Image.height / level4Image.width) / 20)
+      addTable(level4, level4Row, '設定・パラメータ一覧', ['対象区分', 'サーバー名', 'サービス名', 'カテゴリ', 'パラメータ', '値'], servers.flatMap((node) => [
         ['サーバー', node.data.displayName, '', '配置・実行基盤', '配置形態', node.data.deploymentType], ['サーバー', node.data.displayName, '', '配置・実行基盤', 'クラウド／仮想化基盤', node.data.platformProvider], ['サーバー', node.data.displayName, '', '配置・実行基盤', 'リージョン・拠点', node.data.platformLocation], ['サーバー', node.data.displayName, '', '配置・実行基盤', 'リソース・クラスタ', node.data.platformResource], ['サーバー', node.data.displayName, '', '配置・実行基盤', '補足情報', node.data.platformDetail], ['サーバー', node.data.displayName, '', 'CPU・メモリ', 'CPU 数値', node.data.cpuValue], ['サーバー', node.data.displayName, '', 'CPU・メモリ', 'CPU 単位', node.data.cpuUnit], ['サーバー', node.data.displayName, '', 'CPU・メモリ', 'メモリ 数値', node.data.memoryValue], ['サーバー', node.data.displayName, '', 'CPU・メモリ', 'メモリ 単位', node.data.memoryUnit], ['サーバー', node.data.displayName, '', 'ストレージ・データ', 'ディスク 数値', node.data.diskValue], ['サーバー', node.data.displayName, '', 'ストレージ・データ', 'ディスク 単位', node.data.diskUnit], ['サーバー', node.data.displayName, '', 'データベース', 'DB使用有無', node.data.dbUsage], ['サーバー', node.data.displayName, '', 'データベース', 'DB種別・サービス', node.data.dbType], ['サーバー', node.data.displayName, '', 'データベース', 'DBバージョン', node.data.dbVersion], ['サーバー', node.data.displayName, '', 'バックアップ・復旧', '方式・サービス', node.data.backupMethod], ['サーバー', node.data.displayName, '', 'バックアップ・復旧', '実行頻度', node.data.backupSchedule], ['サーバー', node.data.displayName, '', 'バックアップ・復旧', '保持期間', node.data.backupRetention], ['サーバー', node.data.displayName, '', 'バックアップ・復旧', '保存先', node.data.backupDestination], ['サーバー', node.data.displayName, '', 'バックアップ・復旧', '復旧目標（RPO / RTO）', node.data.recoveryTarget], ['サーバー', node.data.displayName, '', 'バックアップ・復旧', '復元テスト', node.data.restoreTest], ['サーバー', node.data.displayName, '', '監視・ログ', '方法', node.data.monitoringMethod], ['サーバー', node.data.displayName, '', '監視・ログ', 'ログ保存期間', node.data.logRetention], ['サーバー', node.data.displayName, '', 'OS', '主ホスト名', node.data.hostname], ...node.data.hostnameAliases.map((alias) => ['サーバー', node.data.displayName, '', 'OS', 'ホスト名別名', alias]), ['サーバー', node.data.displayName, '', 'OS', 'OS名', node.data.osName], ['サーバー', node.data.displayName, '', 'OS', 'OSバージョン', node.data.osVersion], ['サーバー', node.data.displayName, '', 'ネットワーク', '代表IPアドレス', node.data.ipAddress], ['サーバー', node.data.displayName, '', 'ネットワーク', '管理IPアドレス', node.data.managementIpAddress], ...node.data.networkInterfaces.flatMap((item) => [['サーバー', node.data.displayName, '', 'ネットワーク', `${item.name || '追加IF'} 用途`, item.purpose], ['サーバー', node.data.displayName, '', 'ネットワーク', `${item.name || '追加IF'} IPアドレス`, item.ipAddress], ['サーバー', node.data.displayName, '', 'ネットワーク', `${item.name || '追加IF'} サブネット`, item.subnet], ['サーバー', node.data.displayName, '', 'ネットワーク', `${item.name || '追加IF'} ゲートウェイ`, item.gateway]]), ['サーバー', node.data.displayName, '', '共通', '用途', node.data.purpose], ['サーバー', node.data.displayName, '', '共通', '備考', node.data.notes],
         ...node.data.middleware.flatMap((middleware) => [...middleware.runtimes.flatMap((runtime) => [['MW・サービス', node.data.displayName, middleware.name, '実行環境・ランタイム', '名称', runtime.name], ['MW・サービス', node.data.displayName, middleware.name, '実行環境・ランタイム', 'バージョン', runtime.version]]), ['MW・サービス', node.data.displayName, middleware.name, 'アプリケーション・ランタイム', 'フレームワーク', middleware.framework], ['MW・サービス', node.data.displayName, middleware.name, 'アプリケーション・ランタイム', '実行方式', middleware.executionMethod], ['MW・サービス', node.data.displayName, middleware.name, 'アプリケーション・ランタイム', 'リポジトリ／イメージ', middleware.repository], ['MW・サービス', node.data.displayName, middleware.name, 'アプリケーション・ランタイム', '設定ファイル', middleware.configurationPath], ['MW・サービス', node.data.displayName, middleware.name, 'MW・サービス', 'バージョン', middleware.version], ['MW・サービス', node.data.displayName, middleware.name, 'MW・サービス', 'ポート', middleware.port], ['MW・サービス', node.data.displayName, middleware.name, 'MW・サービス', '設定メモ', middleware.configurationNote]]),
       ]))
@@ -1696,6 +1749,13 @@ export default function App() {
             <button role="menuitem" disabled={!selectedNode} onClick={runMenuAction(resetSelectedAppearance)}>アイコン・色を初期値へ戻す</button>
           </div>}
         </div>
+        <div className="menu-group">
+          <button className="menu-trigger validation-menu-trigger" onClick={() => { setOpenMenu(null); setShowValidationDialog(true) }}>整合性チェック{validations.filter((item) => item.severity === 'warning').length > 0 && <span className="menu-count-badge">{validations.filter((item) => item.severity === 'warning').length}</span>}</button>
+        </div>
+        <div className="menu-group">
+          <button className={openMenu === 'help' ? 'menu-trigger active' : 'menu-trigger'} aria-haspopup="menu" aria-expanded={openMenu === 'help'} onClick={() => setOpenMenu((current) => current === 'help' ? null : 'help')}>ヘルプ</button>
+          {openMenu === 'help' && <div className="menu-dropdown" role="menu"><button role="menuitem" onClick={runMenuAction(() => setShowHelpDialog(true))}>操作ガイド</button><button role="menuitem" onClick={runMenuAction(() => window.alert('Orden\nインフラ構成を、図と設計情報を連動させて管理するプロトタイプです。'))}>Ordenについて</button></div>}
+        </div>
         <input ref={fileInput} className="hidden" type="file" accept="application/json,.json" onChange={openProject} />
       </nav>
 
@@ -1718,6 +1778,20 @@ export default function App() {
           <div className="panel-heading"><div><h2>保存済みシステム</h2><p>ブラウザ内に保存した、レベル1〜4を含むシステムセットです。</p></div><button onClick={() => setShowProjectLibrary(false)}>閉じる</button></div>
           {savedProjects.length ? <ul>{savedProjects.map((project) => <li key={project.id}><div><strong>{project.name}</strong><small>{new Date(project.updatedAt).toLocaleString('ja-JP')} / {project.nodes.length} 部品</small></div><button className="primary" onClick={() => openBrowserProject(project)}>開く</button></li>)}</ul> : <div className="empty-state">まだブラウザ内に保存されたシステムはありません。</div>}
           <p className="library-note">この保存領域は、現在のブラウザ・このMacだけで利用できます。共有やバックアップにはJSON書出しを使います。</p>
+        </section>
+      </div>}
+
+      {showValidationDialog && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowValidationDialog(false) }}>
+        <section className="validation-dialog panel" role="dialog" aria-modal="true" aria-label="整合性チェック" onMouseDown={(event) => event.stopPropagation()}>
+          <div className="panel-heading"><div><h2>整合性チェック</h2><p>警告 {validations.filter((item) => item.severity === 'warning').length}件 / 情報 {validations.filter((item) => item.severity === 'info').length}件</p></div><button onClick={() => setShowValidationDialog(false)}>閉じる</button></div>
+          {validations.length ? <ul>{validations.map((item, index) => <li key={`${item.message}-${index}`} className={item.severity}><button onClick={() => { setView({ level: 1 }); setSelection({ type: 'node', id: item.nodeIds[0] }); setShowValidationDialog(false) }}><span>{item.severity === 'warning' ? '警告' : '情報'}</span>{item.message}</button></li>)}</ul> : <div className="check-success">現在の構成にMVP対象の警告はありません。</div>}
+        </section>
+      </div>}
+
+      {showHelpDialog && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowHelpDialog(false) }}>
+        <section className="help-dialog panel" role="dialog" aria-modal="true" aria-label="操作ガイド" onMouseDown={(event) => event.stopPropagation()}>
+          <div className="panel-heading"><div><h2>操作ガイド</h2><p>Ordenの基本操作を簡潔にまとめています。</p></div><button onClick={() => setShowHelpDialog(false)}>閉じる</button></div>
+          <div className="help-guide-grid"><section><h3>構成図の操作</h3><dl><dt>部品の追加</dt><dd>左の部品一覧からドラッグ＆ドロップ、またはクリックします。</dd><dt>部品の移動</dt><dd>部品をドラッグします。グリッドと他部品の中心線へ吸着します。</dd><dt>接続</dt><dd>接続モードで支点をドラッグ、または⌘／Ctrlを押しながら2部品を選択します。</dd><dt>線の編集</dt><dd>線を選択し、経路・始点・終点をドラッグします。</dd></dl></section><section><h3>レベル構成</h3><dl><dt>レベル1：全体構成図</dt><dd>システム全体の部品と接続を把握します。主な閲覧者：営業、顧客、管理者。</dd><dt>レベル2：サーバー詳細図</dt><dd>サーバー／VMごとのOS、リソース、ネットワーク、運用情報を整理します。主な閲覧者：インフラ、運用担当。</dd><dt>レベル3：MW・サービス詳細</dt><dd>サービスの用途、ランタイム、実行方式、ポートなどを整理します。主な閲覧者：開発、インフラ、運用担当。</dd><dt>レベル4：設定・パラメータ</dt><dd>OS、ネットワーク、セキュリティ、サービスの詳細値と方針を管理します。主な閲覧者：設計・構築担当。</dd></dl></section><section><h3>設計情報</h3><dl><dt>詳細を開く</dt><dd>サーバーをダブルクリック、またはプロパティから詳細図を開きます。</dd><dt>整合性チェック</dt><dd>メニューバーから開き、結果を選ぶと該当部品へ移動します。</dd></dl></section><section><h3>保存・書き出し</h3><dl><dt>ブラウザ保存</dt><dd>現在のブラウザ内にシステムセットを保存します。</dd><dt>共有・バックアップ</dt><dd>ファイルからJSONを書き出し、別の環境ではJSONを開きます。</dd><dt>一覧出力</dt><dd>書き出しメニューからCSVまたはExcelを作成します。</dd></dl></section><section><h3>キーボード操作</h3><dl><dt>元に戻す</dt><dd>⌘Z または Ctrl+Z</dd><dt>やり直す</dt><dd>⌘⇧Z または Ctrl+Y</dd><dt>削除</dt><dd>選択中の部品・接続をDeleteキーで削除します。</dd></dl></section></div>
         </section>
       </div>}
 
@@ -1804,12 +1878,6 @@ export default function App() {
 
       {showDesignNotes && <DesignNotePanel level="レベル1" description="システム全体の方針、判断理由、顧客・営業へ共有したい背景を残します。" value={systemPolicy.designNote} onChange={(value) => setSystemPolicy((current) => ({ ...current, designNote: value }))} />}
 
-      <section className="checks panel">
-        <div className="panel-heading">
-          <div><h2>チェック結果</h2><p>警告 {validations.filter((item) => item.severity === 'warning').length}件 / 情報 {validations.filter((item) => item.severity === 'info').length}件</p></div>
-        </div>
-        {validations.length ? <ul>{validations.map((item, index) => <li key={`${item.message}-${index}`} className={item.severity} onClick={() => setSelection({ type: 'node', id: item.nodeIds[0] })}><span>{item.severity === 'warning' ? '警告' : '情報'}</span>{item.message}</li>)}</ul> : <div className="check-success">現在の構成にMVP対象の警告はありません。</div>}
-      </section>
       </> : viewServer ? <ScaleView server={viewServer} view={view} showDesignNotes={showDesignNotes} onNavigate={setView} onUpdateServer={updateServer} onUpdateHostnameAlias={updateHostnameAlias} onAddHostnameAlias={addHostnameAlias} onDeleteHostnameAlias={deleteHostnameAlias} onUpdateNetworkInterface={updateNetworkInterface} onAddNetworkInterface={addNetworkInterface} onDeleteNetworkInterface={deleteNetworkInterface} onUpdateSelinuxServiceSetting={updateSelinuxServiceSetting} onAddSelinuxServiceSetting={addSelinuxServiceSetting} onDeleteSelinuxServiceSetting={deleteSelinuxServiceSetting} onUpdateAppArmorRule={updateAppArmorRule} onAddAppArmorRule={addAppArmorRule} onDeleteAppArmorRule={deleteAppArmorRule} onUpdateMiddleware={updateMiddleware} onUpdateRuntime={updateRuntime} onAddRuntime={addRuntime} onDeleteRuntime={deleteRuntime} onAddMiddleware={addMiddleware} onDeleteMiddleware={deleteMiddleware} /> : <section className="scale-screen panel"><h2>対象のサーバーが見つかりません。</h2><button onClick={() => setView({ level: 1 })}>全体構成図へ戻る</button></section>}
     </main>
   )
