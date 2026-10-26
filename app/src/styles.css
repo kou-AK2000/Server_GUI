@@ -7,6 +7,7 @@ button { cursor: pointer; }
 .app-header { display: flex; justify-content: space-between; align-items: center; gap: 1.5rem; padding: .4rem .55rem .55rem; }
 .eyebrow { margin: 0 0 .2rem; color: #52709b; font-size: .72rem; font-weight: 750; letter-spacing: .12em; }
 h1 { margin: 0; font-size: 1.35rem; letter-spacing: -.03em; }
+.brand-logo { display: block; width: 9rem; height: auto; margin: -.15rem 0 -.25rem; }
 .project-name { display: inline-grid; grid-template-columns: auto minmax(12rem, 20rem); align-items: center; gap: .45rem; margin-top: .65rem; color: #536c86; font-size: .76rem; font-weight: 750; }
 .project-name input { width: 100%; border: 1px solid #bdd0e5; border-radius: .35rem; padding: .36rem .48rem; color: #172033; background: #fff; font-size: .86rem; font-weight: 650; }
 .project-name input:focus { outline: 2px solid #bfdbfe; border-color: #3b82f6; }

@@ -26,6 +26,7 @@ import { userGuide } from './i18n/guide'
 import { designNoteCopy } from './i18n/design-notes'
 import { systemPolicyExamples } from './i18n/system-policy'
 import { legacyEnglishTranslations } from './i18n/legacy'
+import ordenLogo from './assets/orden-logo-original.png'
 
 type DeviceKind = 'server' | 'network' | 'l2-switch' | 'router' | 'firewall' | 'database' | 'storage' | 'cloud' | 'custom'
 type IconKey = 'server' | 'network' | 'router' | 'shield' | 'database' | 'storage' | 'cloud' | 'box'
@@ -1723,7 +1724,7 @@ export default function App() {
       <header className="app-header">
         <div>
           <p className="eyebrow">PROTOTYPE / MVP</p>
-          <h1>Orden</h1>
+          <img className="brand-logo" src={ordenLogo} alt="Orden" />
           <label className="project-name">{t('システム名')}<input value={projectName} onChange={(event) => { setProjectName(event.target.value); setSaveMessage('') }} placeholder={t('例: 販売管理システム')} /></label>
           <div className="breadcrumb">
             <button onClick={() => setView({ level: 1 })}>{t('レベル1 全体構成図')}</button>
