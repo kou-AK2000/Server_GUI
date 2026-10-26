@@ -78,7 +78,9 @@ Yjsは競合を自動統合するCRDTであり、WebSocketなどの通信プロ�
 ```text
 document_json (JSONB)
 ├─ schemaVersion
-├─ projectName
+├─ id
+├─ name
+├─ updatedAt
 ├─ nodes[]
 ├─ edges[]
 ├─ systemPolicy
@@ -99,13 +101,18 @@ JSONエクスポートでは、少なくとも次のメタデータを保持し�
 
 ```json
 {
-  "schemaVersion": "1.0",
-  "projectId": "uuid",
-  "diagramId": "uuid",
+  "schemaVersion": "1.4",
+  "id": "uuid",
+  "name": "販売管理システム",
   "exportedAt": "2026-10-26T00:00:00.000Z",
-  "document": {}
+  "nodes": [],
+  "edges": [],
+  "systemPolicy": {},
+  "layoutTemplate": "hierarchy"
 }
 ```
+
+既存のフラットなJSON構造を維持します。将来、DB内で`projectId`と`diagramId`を別管理しても、JSONファイルの形式を急に入れ子へ変更しません。
 
 サーバー固有の権限情報、アクセストークン、利用者のメールアドレスは、JSONエクスポートに含めません。
 

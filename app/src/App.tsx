@@ -27,6 +27,7 @@ import { designNoteCopy } from './i18n/design-notes'
 import { systemPolicyExamples } from './i18n/system-policy'
 import { legacyEnglishTranslations } from './i18n/legacy'
 import ordenLogo from './assets/orden-logo-original.png'
+import { readStoredProjects, writeStoredProject } from './project-storage'
 
 type DeviceKind = 'server' | 'network' | 'l2-switch' | 'router' | 'firewall' | 'database' | 'storage' | 'cloud' | 'custom'
 type IconKey = 'server' | 'network' | 'router' | 'shield' | 'database' | 'storage' | 'cloud' | 'box'
@@ -138,7 +139,7 @@ type Selection = { type: 'node'; id: string } | { type: 'edge'; id: string } | n
 type Validation = { severity: 'warning' | 'info'; message: string; nodeIds: string[] }
 type ConnectionData = { connectionType: string; sourceInterface: string; targetInterface: string; notes: string; waypoint?: { x: number; y: number }; manualHandles?: boolean; routeOffset?: number; routeAnchorMode?: 'source' | 'target' | 'middle'; manualRoute?: { x: number; y: number } }
 type ConnectionField = Exclude<keyof ConnectionData, 'waypoint' | 'manualHandles' | 'routeOffset' | 'routeAnchorMode' | 'manualRoute'>
-type StoredProject = { schemaVersion: '1.4'; id: string; name: string; systemPolicy: SystemPolicy; layoutTemplate: LayoutTemplateId; nodes: Node<DeviceData>[]; edges: Edge<ConnectionData>[]; updatedAt: string }
+type StoredProject = { schemaVersion: string; id: string; name: string; systemPolicy: SystemPolicy; layoutTemplate: LayoutTemplateId; nodes: Node<DeviceData>[]; edges: Edge<ConnectionData>[]; updatedAt: string; exportedAt?: string }
 type HistorySnapshot = { projectId: string; projectName: string; systemPolicy: SystemPolicy; layoutTemplate: LayoutTemplateId; nodes: Node<DeviceData>[]; edges: Edge<ConnectionData>[] }
 type HistoryState = { undo: HistorySnapshot[]; redo: HistorySnapshot[]; current: HistorySnapshot }
 type LayoutTemplateId = 'blank' | 'hierarchy' | 'zone' | 'cloud' | 'hub'
@@ -158,6 +159,7 @@ function historyEdges(edges: Edge<ConnectionData>[]) {
 }
 
 const browserStorageKey = 'server-design-gui.projects.v1'
+const currentProjectSchemaVersion = '1.4'
 const emptySystemPolicy = (): SystemPolicy => ({ architecturePolicy: '', sharedNetwork: '', governance: '', availabilityPolicy: '', boundaryPolicy: '', notes: '', designNote: '' })
 const isLayoutTemplateId = (value: unknown): value is LayoutTemplateId => ['blank', 'hierarchy', 'zone', 'cloud', 'hub'].includes(String(value))
 
@@ -903,10 +905,62 @@ function normalizeEdges(edges: Edge<ConnectionData>[]) {
   return edges.map((edge) => ({ ...edge, type: 'editable', data: { ...defaultConnectionData(), ...edge.data } }))
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isProjectGraph(value: Record<string, unknown>) {
+  return Array.isArray(value.nodes)
+    && Array.isArray(value.edges)
+    && value.nodes.every((node) => isRecord(node) && typeof node.id === 'string' && isRecord(node.data))
+    && value.edges.every((edge) => isRecord(edge) && typeof edge.id === 'string' && typeof edge.source === 'string' && typeof edge.target === 'string')
+}
+
+/**
+ * Converts every supported historic JSON form into the current in-memory
+ * document. New schema changes must add an explicit migration here instead of
+ * changing import callers individually.
+ */
+function migrateProjectDocument(value: unknown): StoredProject {
+  if (!isRecord(value) || !isProjectGraph(value)) throw new Error('invalid-project-document')
+  const sourceVersion = typeof value.schemaVersion === 'string' ? value.schemaVersion : 'legacy'
+  if (sourceVersion !== 'legacy' && !/^1(?:\.\d+)?$/.test(sourceVersion)) throw new Error('unsupported-project-schema')
+
+  const nodes = normalizeNodes(value.nodes as Node<DeviceData>[])
+  const edges = normalizeEdges(value.edges as Edge<ConnectionData>[])
+  const now = new Date().toISOString()
+  return {
+    schemaVersion: currentProjectSchemaVersion,
+    id: typeof value.id === 'string' && value.id ? value.id : crypto.randomUUID(),
+    name: typeof value.name === 'string' && value.name.trim() ? value.name : '名称未設定のシステム',
+    systemPolicy: normalizeSystemPolicy((isRecord(value.systemPolicy) ? value.systemPolicy : isRecord(value.infrastructure) ? value.infrastructure : undefined)),
+    layoutTemplate: isLayoutTemplateId(value.layoutTemplate) ? value.layoutTemplate : 'blank',
+    nodes,
+    edges,
+    updatedAt: typeof value.updatedAt === 'string' ? value.updatedAt : now,
+    exportedAt: typeof value.exportedAt === 'string' ? value.exportedAt : undefined,
+  }
+}
+
+function createProjectDocument(project: Omit<StoredProject, 'schemaVersion' | 'updatedAt' | 'exportedAt'>, options: { updatedAt?: string; exportedAt?: string } = {}): StoredProject {
+  return {
+    ...project,
+    schemaVersion: currentProjectSchemaVersion,
+    updatedAt: options.updatedAt ?? new Date().toISOString(),
+    ...(options.exportedAt ? { exportedAt: options.exportedAt } : {}),
+  }
+}
+
 function readBrowserProjects(): StoredProject[] {
   try {
     const parsed = JSON.parse(localStorage.getItem(browserStorageKey) ?? '[]')
-    return Array.isArray(parsed) ? parsed.filter((item): item is StoredProject => item && typeof item.id === 'string' && typeof item.name === 'string' && Array.isArray(item.nodes) && Array.isArray(item.edges)) : []
+    return Array.isArray(parsed) ? parsed.flatMap((item) => {
+      try {
+        return [migrateProjectDocument(item)]
+      } catch {
+        return []
+      }
+    }) : []
   } catch {
     return []
   }
@@ -937,6 +991,7 @@ export default function App() {
   const [layoutTemplate, setLayoutTemplate] = useState<LayoutTemplateId>('hierarchy')
   const [historyRevision, setHistoryRevision] = useState(0)
   const [savedProjects, setSavedProjects] = useState<StoredProject[]>(readBrowserProjects)
+  const [storageReady, setStorageReady] = useState(false)
   const [showProjectLibrary, setShowProjectLibrary] = useState(false)
   const [showValidationDialog, setShowValidationDialog] = useState(false)
   const [showHelpDialog, setShowHelpDialog] = useState(false)
@@ -956,6 +1011,34 @@ export default function App() {
     localStorage.setItem(localeStorageKey, locale)
     document.documentElement.lang = locale
   }, [locale])
+
+  useEffect(() => {
+    let cancelled = false
+    const loadStoredProjects = async () => {
+      const legacyProjects = readBrowserProjects()
+      try {
+        const indexedProjects = (await readStoredProjects()).flatMap((project) => {
+          try {
+            return [migrateProjectDocument(project)]
+          } catch {
+            return []
+          }
+        })
+        if (indexedProjects.length) {
+          if (!cancelled) setSavedProjects(indexedProjects)
+          return
+        }
+        if (legacyProjects.length) await Promise.all(legacyProjects.map((project) => writeStoredProject(project)))
+        if (!cancelled) setSavedProjects(legacyProjects)
+      } catch {
+        if (!cancelled) setSavedProjects(legacyProjects)
+      } finally {
+        if (!cancelled) setStorageReady(true)
+      }
+    }
+    void loadStoredProjects()
+    return () => { cancelled = true }
+  }, [])
 
   useEffect(() => {
     if (!openMenu) return
@@ -991,6 +1074,33 @@ export default function App() {
     history.redo = []
     setHistoryRevision((current) => current + 1)
   }, [nodes, edges, projectId, projectName, systemPolicy, layoutTemplate])
+
+  useEffect(() => {
+    if (!storageReady) return
+    const timer = window.setTimeout(() => {
+      const draft = createProjectDocument({
+        id: projectId,
+        name: projectName.trim() || '名称未設定のシステム',
+        systemPolicy,
+        layoutTemplate,
+        nodes,
+        edges,
+      })
+      void writeStoredProject(draft).then(() => {
+        setSavedProjects((current) => [...current.filter((item) => item.id !== draft.id), draft].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)))
+      }).catch(() => {
+        // IndexedDBが利用できないブラウザでは、従来のブラウザ保存へ退避する。
+        const fallback = [...savedProjects.filter((item) => item.id !== draft.id), draft].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+        try {
+          localStorage.setItem(browserStorageKey, JSON.stringify(fallback))
+          setSavedProjects(fallback)
+        } catch {
+          // 保存不能時も編集中の画面状態は保持する。
+        }
+      })
+    }, 900)
+    return () => window.clearTimeout(timer)
+  }, [storageReady, projectId, projectName, systemPolicy, layoutTemplate, nodes, edges])
 
   const applyHistorySnapshot = (snapshotToApply: HistorySnapshot) => {
     setProjectId(snapshotToApply.projectId)
@@ -1040,7 +1150,7 @@ export default function App() {
         redo()
       } else if (command && event.key.toLowerCase() === 's') {
         event.preventDefault()
-        saveInBrowser()
+        void saveInBrowser()
       } else if ((event.key === 'Backspace' || event.key === 'Delete') && selection) {
         event.preventDefault()
         deleteSelected()
@@ -1108,8 +1218,8 @@ export default function App() {
     return { x, y }
   }
 
-  const runMenuAction = (action: () => void) => () => {
-    action()
+  const runMenuAction = (action: () => void | Promise<void>) => () => {
+    void action()
     setOpenMenu(null)
   }
 
@@ -1522,30 +1632,48 @@ export default function App() {
     setSaveMessage(tf('status.rearranged', { template: templateName }))
   }
 
+  const currentProjectDocument = (options: { exportedAt?: string } = {}) => createProjectDocument({
+    id: projectId,
+    name: projectName.trim() || '名称未設定のシステム',
+    systemPolicy,
+    layoutTemplate,
+    nodes,
+    edges,
+  }, options)
+
   const saveProject = () => {
-    download(`${projectName || 'server-design-project'}.json`, JSON.stringify({ schemaVersion: '1.4', id: projectId, name: projectName, systemPolicy, layoutTemplate, nodes, edges }, null, 2), 'application/json')
+    const document = currentProjectDocument({ exportedAt: new Date().toISOString() })
+    download(`${projectName || 'server-design-project'}.json`, JSON.stringify(document, null, 2), 'application/json')
   }
 
-  const saveInBrowser = () => {
-    const project: StoredProject = { schemaVersion: '1.4', id: projectId, name: projectName.trim() || '名称未設定のシステム', systemPolicy, layoutTemplate, nodes, edges, updatedAt: new Date().toISOString() }
+  const saveInBrowser = async () => {
+    const project = currentProjectDocument()
     const updated = [...savedProjects.filter((item) => item.id !== project.id), project].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
     try {
-      localStorage.setItem(browserStorageKey, JSON.stringify(updated))
+      await writeStoredProject(project)
       setSavedProjects(updated)
       setProjectName(project.name)
       setSaveMessage(t('status.browserSaved'))
     } catch {
-      setSaveMessage(t('status.browserSaveFailed'))
+      try {
+        localStorage.setItem(browserStorageKey, JSON.stringify(updated))
+        setSavedProjects(updated)
+        setProjectName(project.name)
+        setSaveMessage(t('status.browserSaved'))
+      } catch {
+        setSaveMessage(t('status.browserSaveFailed'))
+      }
     }
   }
 
   const openBrowserProject = (project: StoredProject) => {
-    setProjectId(project.id)
-    setProjectName(project.name)
-    setSystemPolicy(normalizeSystemPolicy(project.systemPolicy as unknown as Record<string, unknown> | undefined))
-    setLayoutTemplate(isLayoutTemplateId((project as Partial<StoredProject>).layoutTemplate) ? project.layoutTemplate : 'blank')
-    setNodes(normalizeNodes(project.nodes))
-    setEdges(normalizeEdges(project.edges))
+    const document = migrateProjectDocument(project)
+    setProjectId(document.id)
+    setProjectName(document.name)
+    setSystemPolicy(document.systemPolicy)
+    setLayoutTemplate(document.layoutTemplate)
+    setNodes(document.nodes)
+    setEdges(document.edges)
     setSelection(null)
     setView({ level: 1 })
     setShowProjectLibrary(false)
@@ -1595,17 +1723,16 @@ export default function App() {
     const file = event.target.files?.[0]
     if (!file) return
     try {
-      const parsed = JSON.parse(await file.text()) as Partial<StoredProject>
-      if (!Array.isArray(parsed.nodes) || !Array.isArray(parsed.edges)) throw new Error('invalid project')
-      setNodes(normalizeNodes(parsed.nodes))
-      setEdges(normalizeEdges(parsed.edges))
-      setProjectId(parsed.id ?? crypto.randomUUID())
-      setProjectName(parsed.name ?? (file.name.replace(/\.json$/i, '') || '読み込み済みシステム'))
-      setSystemPolicy(normalizeSystemPolicy((parsed.systemPolicy ?? (parsed as unknown as { infrastructure?: Record<string, unknown> }).infrastructure) as Record<string, unknown> | undefined))
-      setLayoutTemplate(isLayoutTemplateId(parsed.layoutTemplate) ? parsed.layoutTemplate : 'blank')
+      const document = migrateProjectDocument(JSON.parse(await file.text()))
+      setNodes(document.nodes)
+      setEdges(document.edges)
+      setProjectId(document.id)
+      setProjectName(document.name || (file.name.replace(/\.json$/i, '') || '読み込み済みシステム'))
+      setSystemPolicy(document.systemPolicy)
+      setLayoutTemplate(document.layoutTemplate)
       setSelection(null)
       setView({ level: 1 })
-      setSaveMessage(`「${parsed.name ?? file.name}」を読み込みました。`)
+      setSaveMessage(`「${document.name || file.name}」を読み込みました。`)
     } catch {
       window.alert('このJSONファイルは読み込めませんでした。')
     } finally {
