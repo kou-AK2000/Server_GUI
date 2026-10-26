@@ -176,6 +176,8 @@ APIでは、すべての`projectId`／`diagramId`アクセス時にワークス�
 - `document_json`（JSONB）による保存と、`diagram_revisions`による履歴を実装する。
 - 共同編集は行わず、リビジョン競合を検出する。
 
+初期実装では、`server/`にPostgreSQLスキーマ、Workspace / Project / Diagram API、3ロールの認可、JSONB保存、リビジョン履歴・競合検出を置く。ローカル検証用の開発IDヘッダー認証は、本番公開前にOIDCまたは社内SSOへ置き換える。
+
 ### フェーズ3：Yjs共同編集
 
 - WebSocketとYjsを導入する。

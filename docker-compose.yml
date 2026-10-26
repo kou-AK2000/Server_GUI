@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: orden-postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: orden
+      POSTGRES_PASSWORD: orden-development-only
+      POSTGRES_DB: orden
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - orden-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orden -d orden"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  orden-postgres-data:

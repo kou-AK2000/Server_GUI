@@ -21,6 +21,7 @@ Orden（オルデン）は、スペイン語で「秩序・整頓」を意味し
 ```text
 .
 ├─ app/       # React / TypeScriptによるブラウザアプリ
+├─ server/    # Phase 2: Node.js / TypeScript APIとPostgreSQLスキーマ
 └─ docs/      # 要件、データモデル、画面仕様、出力仕様
 ```
 
@@ -41,7 +42,16 @@ pnpm dev
 - 構成図、部品属性、接続、チェック、出力は共通データを正本とする
 - 設計データはJSONで扱い、将来のGit管理やIaC連携につなげる
 - ブラウザ保存は作業用、JSON書出しは共有・バックアップ用にする
-- DB・認証・複数人同時編集は、プロトタイプでの検証後に段階的に追加する
+- ブラウザ内保存は作業用、サーバー保存ではWorkspace単位の権限・履歴を管理する
+- DB・認証・複数人同時編集は段階的に追加する。現在のサーバーAPIは開発用認証までを実装済み
+
+## Phase 2 サーバー基盤（開発中）
+
+`server/`には、PostgreSQLへ現在のOrden JSONをJSONBとして保存するAPI基盤があります。ワークスペース権限、プロジェクト、構成図、履歴、保存競合の検出を担当します。
+
+開発環境では、ブラウザ画面からクラウド保存・読込を確認できます。本番認証は未実装のため、公開前にOIDCまたは社内SSOを接続します。詳細とローカル起動方法は[server/README.md](server/README.md)を参照してください。
+
+ローカル開発では、Docker Desktopがある環境向けに[Docker Compose設定](docker-compose.yml)も用意しています。`docker compose up -d postgres`でPostgreSQLだけを起動し、APIとブラウザアプリはMac上のNode.jsで動かします。初回セットアップから日常操作までの手順は[Docker Desktopによるローカル開発環境](docs/docker-local-development.md)を参照してください。
 
 ## 作成者・管理
 

@@ -28,6 +28,7 @@ import { systemPolicyExamples } from './i18n/system-policy'
 import { legacyEnglishTranslations } from './i18n/legacy'
 import ordenLogo from './assets/orden-logo-original.png'
 import { readStoredProjects, writeStoredProject } from './project-storage'
+import { cloudApiConfigured, listCloudDiagrams, loadCloudDiagram, saveDocumentToCloud, type CloudBinding, type CloudDiagram } from './cloud-api'
 
 type DeviceKind = 'server' | 'network' | 'l2-switch' | 'router' | 'firewall' | 'database' | 'storage' | 'cloud' | 'custom'
 type IconKey = 'server' | 'network' | 'router' | 'shield' | 'database' | 'storage' | 'cloud' | 'box'
@@ -159,6 +160,7 @@ function historyEdges(edges: Edge<ConnectionData>[]) {
 }
 
 const browserStorageKey = 'server-design-gui.projects.v1'
+const cloudBindingStorageKey = 'orden.cloud-bindings.v1'
 const currentProjectSchemaVersion = '1.4'
 const emptySystemPolicy = (): SystemPolicy => ({ architecturePolicy: '', sharedNetwork: '', governance: '', availabilityPolicy: '', boundaryPolicy: '', notes: '', designNote: '' })
 const isLayoutTemplateId = (value: unknown): value is LayoutTemplateId => ['blank', 'hierarchy', 'zone', 'cloud', 'hub'].includes(String(value))
@@ -966,6 +968,25 @@ function readBrowserProjects(): StoredProject[] {
   }
 }
 
+function readCloudBinding(localProjectId: string): CloudBinding | undefined {
+  try {
+    const bindings = JSON.parse(localStorage.getItem(cloudBindingStorageKey) ?? '{}') as Record<string, CloudBinding>
+    const binding = bindings[localProjectId]
+    return binding && typeof binding.diagramId === 'string' && Number.isInteger(binding.revision) ? binding : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function writeCloudBinding(localProjectId: string, binding: CloudBinding) {
+  try {
+    const bindings = JSON.parse(localStorage.getItem(cloudBindingStorageKey) ?? '{}') as Record<string, CloudBinding>
+    localStorage.setItem(cloudBindingStorageKey, JSON.stringify({ ...bindings, [localProjectId]: binding }))
+  } catch {
+    // Cloud save remains possible during this session even if local binding metadata cannot persist.
+  }
+}
+
 export default function App() {
   const [locale, setLocale] = useState<Locale>(readLocale)
   // `TranslationKey` is used for newly migrated UI. The Japanese-phrase
@@ -993,6 +1014,9 @@ export default function App() {
   const [savedProjects, setSavedProjects] = useState<StoredProject[]>(readBrowserProjects)
   const [storageReady, setStorageReady] = useState(false)
   const [showProjectLibrary, setShowProjectLibrary] = useState(false)
+  const [showCloudLibrary, setShowCloudLibrary] = useState(false)
+  const [cloudDiagrams, setCloudDiagrams] = useState<CloudDiagram[]>([])
+  const [cloudLoading, setCloudLoading] = useState(false)
   const [showValidationDialog, setShowValidationDialog] = useState(false)
   const [showHelpDialog, setShowHelpDialog] = useState(false)
   const [showAboutDialog, setShowAboutDialog] = useState(false)
@@ -1063,6 +1087,15 @@ export default function App() {
     window.addEventListener('keydown', closeOnEscape)
     return () => window.removeEventListener('keydown', closeOnEscape)
   }, [showProjectLibrary])
+
+  useEffect(() => {
+    if (!showCloudLibrary) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowCloudLibrary(false)
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [showCloudLibrary])
 
   useEffect(() => {
     const history = historyRef.current
@@ -1680,6 +1713,55 @@ export default function App() {
     setSaveMessage(`「${project.name}」を開きました。`)
   }
 
+  const saveToCloud = async () => {
+    if (!cloudApiConfigured) return
+    const document = currentProjectDocument()
+    try {
+      const binding = await saveDocumentToCloud(document as unknown as Record<string, unknown>, readCloudBinding(projectId))
+      writeCloudBinding(projectId, binding)
+      setSaveMessage(t('status.cloudSaved'))
+    } catch (error) {
+      const currentRevision = error instanceof Error && 'currentRevision' in error ? (error as Error & { currentRevision?: number }).currentRevision : undefined
+      setSaveMessage(currentRevision ? t('status.cloudConflict') : t('status.cloudFailed'))
+    }
+  }
+
+  const openCloudLibrary = async () => {
+    if (!cloudApiConfigured) return
+    setShowCloudLibrary(true)
+    setCloudLoading(true)
+    try {
+      setCloudDiagrams(await listCloudDiagrams())
+    } catch {
+      setSaveMessage(t('status.cloudFailed'))
+    } finally {
+      setCloudLoading(false)
+    }
+  }
+
+  const openCloudProject = async (diagram: CloudDiagram) => {
+    setCloudLoading(true)
+    try {
+      const loaded = await loadCloudDiagram(diagram.id)
+      const document = migrateProjectDocument(loaded.document)
+      setProjectId(document.id)
+      setProjectName(document.name)
+      setSystemPolicy(document.systemPolicy)
+      setLayoutTemplate(document.layoutTemplate)
+      setNodes(document.nodes)
+      setEdges(document.edges)
+      setSelection(null)
+      setView({ level: 1 })
+      writeCloudBinding(document.id, { workspaceId: diagram.workspaceId, projectId: diagram.projectId, diagramId: diagram.id, revision: loaded.revision })
+      setShowCloudLibrary(false)
+      setSaveMessage(tf('status.cloudOpened', { name: document.name }))
+    } catch {
+      setSaveMessage(t('status.cloudFailed'))
+    } finally {
+      setCloudLoading(false)
+    }
+  }
+
   const createNewProject = () => {
     setTemplatePickerMode('new')
   }
@@ -1869,6 +1951,7 @@ export default function App() {
             <span className="menu-divider" />
             <button role="menuitem" onClick={runMenuAction(saveInBrowser)}>{t('action.saveBrowser')}</button>
             <button role="menuitem" onClick={runMenuAction(() => setShowProjectLibrary(true))}>{t('action.openSavedSystem')}</button>
+            {cloudApiConfigured && <><span className="menu-divider" /><button role="menuitem" onClick={runMenuAction(saveToCloud)}>{t('action.saveCloud')}</button><button role="menuitem" onClick={runMenuAction(openCloudLibrary)}>{t('action.openCloud')}</button></>}
             <span className="menu-divider" />
             <button role="menuitem" onClick={runMenuAction(() => fileInput.current?.click())}>{t('action.openJson')}</button>
           </div>}
@@ -1941,6 +2024,13 @@ export default function App() {
           <div className="panel-heading"><div><h2>{t('保存済みシステム')}</h2><p>{t('saved.description')}</p></div><button onClick={() => setShowProjectLibrary(false)}>{t('閉じる')}</button></div>
           {savedProjects.length ? <ul>{savedProjects.map((project) => <li key={project.id}><div><strong>{project.name}</strong><small>{new Date(project.updatedAt).toLocaleString(locale === 'en' ? 'en-US' : 'ja-JP')} / {project.nodes.length} {t('saved.componentCount')}</small></div><button className="primary" onClick={() => openBrowserProject(project)}>{t('開く')}</button></li>)}</ul> : <div className="empty-state">{t('まだブラウザ内に保存されたシステムはありません。')}</div>}
           <p className="library-note">{t('この保存領域は、現在のブラウザ・このMacだけで利用できます。共有やバックアップにはJSON書出しを使います。')}</p>
+        </section>
+      </div>}
+
+      {showCloudLibrary && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowCloudLibrary(false) }}>
+        <section className="project-library panel" role="dialog" aria-modal="true" aria-label={t('dialog.cloudSystems')} onMouseDown={(event) => event.stopPropagation()}>
+          <div className="panel-heading"><div><h2>{t('dialog.cloudSystems')}</h2><p>{t('cloud.description')}</p></div><button onClick={() => setShowCloudLibrary(false)}>{t('閉じる')}</button></div>
+          {cloudLoading ? <div className="empty-state">{t('common.loading')}</div> : cloudDiagrams.length ? <ul>{cloudDiagrams.map((diagram) => <li key={diagram.id}><div><strong>{diagram.name}</strong><small>{diagram.workspaceName} / {diagram.projectName} / {new Date(diagram.updatedAt).toLocaleString(locale === 'en' ? 'en-US' : 'ja-JP')}</small></div><button className="primary" onClick={() => void openCloudProject(diagram)}>{t('開く')}</button></li>)}</ul> : <div className="empty-state">{t('cloud.empty')}</div>}
         </section>
       </div>}
 
