@@ -28,6 +28,7 @@ h2 { margin: 0; font-size: .95rem; }
 .menu-dropdown button:disabled { cursor: not-allowed; color: #a2afbf; }
 .shortcut { margin-left: .6rem; color: #6c7f96; font-size: .68rem; font-weight: 600; }
 .menu-divider { height: 1px; margin: .22rem .35rem; background: #e1e8f0; }
+.menu-submenu { position: relative; }.menu-submenu > button { display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 1.5rem; }.menu-dropdown.nested { top: -.3rem; left: calc(100% + .25rem); }
 button { border: 1px solid #c8d5e6; background: #fff; color: #23324c; border-radius: .45rem; padding: .48rem .7rem; font-weight: 650; font-size: .85rem; }
 button:hover { border-color: #5d83bc; background: #f6f9ff; }
 button.primary { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }

@@ -1021,7 +1021,8 @@ export default function App() {
   const [showHelpDialog, setShowHelpDialog] = useState(false)
   const [showAboutDialog, setShowAboutDialog] = useState(false)
   const [saveMessage, setSaveMessage] = useState('')
-  const [openMenu, setOpenMenu] = useState<'file' | 'export' | 'edit' | 'view' | 'layout' | 'help' | null>(null)
+  const [openMenu, setOpenMenu] = useState<'file' | 'edit' | 'view' | 'layout' | 'help' | null>(null)
+  const [openFileSubmenu, setOpenFileSubmenu] = useState<'import' | 'export' | null>(null)
   const [panelWidths, setPanelWidths] = useState({ palette: 200, properties: 272 })
   const [workspaceHeight, setWorkspaceHeight] = useState(544)
   const fileInput = useRef<HTMLInputElement>(null)
@@ -1067,7 +1068,10 @@ export default function App() {
   useEffect(() => {
     if (!openMenu) return
     const closeMenuOnOutsideClick = (event: PointerEvent) => {
-      if (event.target instanceof Element && !menuBarRef.current?.contains(event.target)) setOpenMenu(null)
+      if (event.target instanceof Element && !menuBarRef.current?.contains(event.target)) {
+        setOpenMenu(null)
+        setOpenFileSubmenu(null)
+      }
     }
     window.addEventListener('pointerdown', closeMenuOnOutsideClick)
     return () => window.removeEventListener('pointerdown', closeMenuOnOutsideClick)
@@ -1254,6 +1258,7 @@ export default function App() {
   const runMenuAction = (action: () => void | Promise<void>) => () => {
     void action()
     setOpenMenu(null)
+    setOpenFileSubmenu(null)
   }
 
   const selectedNode = selection?.type === 'node' ? nodes.find((node) => node.id === selection.id) : undefined
@@ -1943,9 +1948,9 @@ export default function App() {
         </div>
       </header>
 
-      <nav ref={menuBarRef} className="app-menu-bar" aria-label={t('dialog.applicationMenu')} onKeyDown={(event) => event.key === 'Escape' && setOpenMenu(null)}>
+      <nav ref={menuBarRef} className="app-menu-bar" aria-label={t('dialog.applicationMenu')} onKeyDown={(event) => { if (event.key === 'Escape') { setOpenMenu(null); setOpenFileSubmenu(null) } }}>
         <div className="menu-group">
-          <button className={openMenu === 'file' ? 'menu-trigger active' : 'menu-trigger'} aria-haspopup="menu" aria-expanded={openMenu === 'file'} onClick={() => setOpenMenu((current) => current === 'file' ? null : 'file')}>{t('menu.file')}</button>
+          <button className={openMenu === 'file' ? 'menu-trigger active' : 'menu-trigger'} aria-haspopup="menu" aria-expanded={openMenu === 'file'} onClick={() => { setOpenMenu((current) => current === 'file' ? null : 'file'); setOpenFileSubmenu(null) }}>{t('menu.file')}</button>
           {openMenu === 'file' && <div className="menu-dropdown" role="menu">
             <button role="menuitem" onClick={runMenuAction(createNewProject)}>{t('新規作成')}</button>
             <span className="menu-divider" />
@@ -1953,15 +1958,8 @@ export default function App() {
             <button role="menuitem" onClick={runMenuAction(() => setShowProjectLibrary(true))}>{t('action.openSavedSystem')}</button>
             {cloudApiConfigured && <><span className="menu-divider" /><button role="menuitem" onClick={runMenuAction(saveToCloud)}>{t('action.saveCloud')}</button><button role="menuitem" onClick={runMenuAction(openCloudLibrary)}>{t('action.openCloud')}</button></>}
             <span className="menu-divider" />
-            <button role="menuitem" onClick={runMenuAction(() => fileInput.current?.click())}>{t('action.openJson')}</button>
-          </div>}
-        </div>
-        <div className="menu-group">
-          <button className={openMenu === 'export' ? 'menu-trigger active' : 'menu-trigger'} aria-haspopup="menu" aria-expanded={openMenu === 'export'} onClick={() => setOpenMenu((current) => current === 'export' ? null : 'export')}>{t('menu.export')}</button>
-          {openMenu === 'export' && <div className="menu-dropdown" role="menu">
-            <button role="menuitem" onClick={runMenuAction(saveProject)}>{t('action.exportJson')}</button>
-            <button role="menuitem" onClick={runMenuAction(exportCsv)}>{t('action.exportCsv')}</button>
-            <button role="menuitem" onClick={runMenuAction(exportExcel)}>{t('action.exportExcel')}</button>
+            <div className="menu-submenu"><button role="menuitem" aria-haspopup="menu" aria-expanded={openFileSubmenu === 'import'} onClick={() => setOpenFileSubmenu((current) => current === 'import' ? null : 'import')}>{t('menu.import')}<span aria-hidden="true">›</span></button>{openFileSubmenu === 'import' && <div className="menu-dropdown nested" role="menu"><button role="menuitem" onClick={runMenuAction(() => fileInput.current?.click())}>{t('action.openJson')}</button></div>}</div>
+            <div className="menu-submenu"><button role="menuitem" aria-haspopup="menu" aria-expanded={openFileSubmenu === 'export'} onClick={() => setOpenFileSubmenu((current) => current === 'export' ? null : 'export')}>{t('menu.export')}<span aria-hidden="true">›</span></button>{openFileSubmenu === 'export' && <div className="menu-dropdown nested" role="menu"><button role="menuitem" onClick={runMenuAction(saveProject)}>{t('action.exportJson')}</button><button role="menuitem" onClick={runMenuAction(exportCsv)}>{t('action.exportCsv')}</button><button role="menuitem" onClick={runMenuAction(exportExcel)}>{t('action.exportExcel')}</button></div>}</div>
           </div>}
         </div>
         <div className="menu-group">
