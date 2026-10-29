@@ -18,7 +18,9 @@ Export Schema v1は、MVPで扱う次の出力を対象とします。
 - 基本チェック結果一覧
 - 全体構成図の出力情報
 
-初期MVPではCSV出力に利用します。将来はExcel、Word、PDF、Markdownのテンプレートが同じSchemaを利用します。
+初期MVPではCSV出力と、Excelテンプレート出力に利用します。Excelテンプレートでは固定セル、繰り返し一覧、レベル1全体構成図の画像配置を扱います。将来はWord、PDF、Markdownのテンプレートも同じSchemaを利用します。
+
+Excelテンプレートのセル・一覧・画像の配置仕様は [export-template-spec-v1.md](export-template-spec-v1.md) を参照してください。
 
 ## 基本原則
 

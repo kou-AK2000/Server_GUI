@@ -1,0 +1,60 @@
+{
+  "schemaVersion": "1.0",
+  "templateId": "orden-standard-v1",
+  "templateVersion": "1.0.0",
+  "sheets": [
+    {
+      "name": "表紙",
+      "cells": [
+        { "address": "B3", "value": "project.name" },
+        { "address": "B4", "value": "generatedAt" },
+        { "address": "B6", "value": "systemPolicy.architecturePolicy" }
+      ]
+    },
+    {
+      "name": "全体構成図",
+      "images": [
+        { "source": "diagrams.level1", "cell": "B4", "width": 760 }
+      ]
+    },
+    {
+      "name": "サーバー一覧",
+      "tables": [
+        {
+          "headerCell": "A6",
+          "dataCell": "A7",
+          "source": "servers",
+          "columns": [
+            { "header": "サーバー名", "value": "displayName" },
+            { "header": "主ホスト名", "value": "hostname" },
+            { "header": "IPアドレス", "value": "ipAddress" },
+            { "header": "OS", "value": "osName" },
+            { "header": "OSバージョン", "value": "osVersion" },
+            { "header": "CPU", "value": "cpu" },
+            { "header": "メモリ", "value": "memory" },
+            { "header": "ディスク", "value": "disk" },
+            { "header": "用途", "value": "purpose" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "接続一覧",
+      "tables": [
+        {
+          "headerCell": "A6",
+          "dataCell": "A7",
+          "source": "connections",
+          "columns": [
+            { "header": "接続元", "value": "sourceComponentName" },
+            { "header": "接続先", "value": "targetComponentName" },
+            { "header": "接続種別", "value": "connectionType" },
+            { "header": "接続元IF", "value": "sourceInterface" },
+            { "header": "接続先IF", "value": "targetInterface" },
+            { "header": "備考", "value": "notes" }
+          ]
+        }
+      ]
+    }
+  ]
+}

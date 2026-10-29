@@ -29,6 +29,8 @@ import { legacyEnglishTranslations } from './i18n/legacy'
 import ordenLogo from './assets/orden-logo-original.png'
 import { readStoredProjects, writeStoredProject } from './project-storage'
 import { cloudApiConfigured, listCloudDiagrams, loadCloudDiagram, saveDocumentToCloud, type CloudBinding, type CloudDiagram } from './cloud-api'
+import { applyExportTemplate, parseExportTemplateMapping } from './export-templates/template-engine'
+import type { ExportTemplateModel, TemplateImage } from './export-templates/types'
 
 type DeviceKind = 'server' | 'network' | 'l2-switch' | 'router' | 'firewall' | 'database' | 'storage' | 'cloud' | 'custom'
 type IconKey = 'server' | 'network' | 'router' | 'shield' | 'database' | 'storage' | 'cloud' | 'box'
@@ -1020,12 +1022,17 @@ export default function App() {
   const [showValidationDialog, setShowValidationDialog] = useState(false)
   const [showHelpDialog, setShowHelpDialog] = useState(false)
   const [showAboutDialog, setShowAboutDialog] = useState(false)
+  const [showTemplateExportDialog, setShowTemplateExportDialog] = useState(false)
+  const [templateWorkbookFile, setTemplateWorkbookFile] = useState<File | null>(null)
+  const [templateMappingFile, setTemplateMappingFile] = useState<File | null>(null)
   const [saveMessage, setSaveMessage] = useState('')
   const [openMenu, setOpenMenu] = useState<'file' | 'edit' | 'view' | 'layout' | 'help' | null>(null)
   const [openFileSubmenu, setOpenFileSubmenu] = useState<'import' | 'export' | null>(null)
   const [panelWidths, setPanelWidths] = useState({ palette: 200, properties: 272 })
   const [workspaceHeight, setWorkspaceHeight] = useState(544)
   const fileInput = useRef<HTMLInputElement>(null)
+  const templateWorkbookInput = useRef<HTMLInputElement>(null)
+  const templateMappingInput = useRef<HTMLInputElement>(null)
   const menuBarRef = useRef<HTMLElement>(null)
   const flowInstanceRef = useRef<{ screenToFlowPosition: (position: { x: number; y: number }) => { x: number; y: number }; fitView: (options?: { padding?: number; duration?: number }) => void } | null>(null)
   const historyRef = useRef<HistoryState | null>(null)
@@ -1930,6 +1937,129 @@ export default function App() {
     }
   }
 
+  const createTemplateExportModel = (): ExportTemplateModel => {
+    const now = new Date().toISOString()
+    const servers = nodes.filter((node) => node.data.kind === 'server')
+    return {
+      schemaVersion: '1.0',
+      generatedAt: now,
+      project: { id: projectId, name: projectName },
+      systemPolicy: { ...systemPolicy },
+      servers: servers.map((node) => ({
+        id: node.id,
+        displayName: node.data.displayName,
+        hostname: node.data.hostname,
+        hostnameAliases: node.data.hostnameAliases.join(' / '),
+        ipAddress: node.data.ipAddress,
+        managementIpAddress: node.data.managementIpAddress,
+        deploymentType: node.data.deploymentType,
+        platformProvider: node.data.platformProvider,
+        platformLocation: node.data.platformLocation,
+        platformResource: node.data.platformResource,
+        platformDetail: node.data.platformDetail,
+        osFamily: node.data.osFamily,
+        osName: node.data.osName,
+        osVersion: node.data.osVersion,
+        cpu: [node.data.cpuValue, node.data.cpuUnit].filter(Boolean).join(' '),
+        memory: [node.data.memoryValue, node.data.memoryUnit].filter(Boolean).join(' '),
+        disk: [node.data.diskValue, node.data.diskUnit].filter(Boolean).join(' '),
+        purpose: node.data.purpose,
+        dbUsage: node.data.dbUsage,
+        dbType: node.data.dbType,
+        dbVersion: node.data.dbVersion,
+        backupMethod: node.data.backupMethod,
+        backupRetention: node.data.backupRetention,
+        monitoringMethod: node.data.monitoringMethod,
+        logRetention: node.data.logRetention,
+        notes: node.data.notes,
+      })),
+      components: nodes.map((node) => ({
+        id: node.id,
+        type: node.data.kind,
+        typeLabel: t(kindLabels[node.data.kind]),
+        displayName: node.data.displayName,
+        hostname: node.data.hostname,
+        ipAddress: node.data.ipAddress,
+        managementIpAddress: node.data.managementIpAddress,
+        purpose: node.data.purpose,
+        notes: node.data.notes,
+      })),
+      ipAddresses: nodes.flatMap((node) => node.data.kind === 'server'
+        ? [
+            { address: node.data.ipAddress, componentId: node.id, componentName: node.data.displayName, componentType: t(kindLabels[node.data.kind]), hostname: node.data.hostname, purpose: node.data.purpose },
+            { address: node.data.managementIpAddress, componentId: node.id, componentName: node.data.displayName, componentType: t(kindLabels[node.data.kind]), hostname: node.data.hostname, purpose: t('管理IP') },
+            ...node.data.networkInterfaces.map((item) => ({ address: item.ipAddress, componentId: node.id, componentName: node.data.displayName, componentType: t(kindLabels[node.data.kind]), hostname: node.data.hostname, purpose: [item.name, item.purpose].filter(Boolean).join(' / ') })),
+          ].filter((item) => item.address)
+        : node.data.managementIpAddress ? [{ address: node.data.managementIpAddress, componentId: node.id, componentName: node.data.displayName, componentType: t(kindLabels[node.data.kind]), hostname: '', purpose: node.data.purpose }] : []),
+      connections: edges.map((edge) => ({
+        id: edge.id,
+        sourceComponentId: edge.source,
+        sourceComponentName: nodes.find((node) => node.id === edge.source)?.data.displayName ?? edge.source,
+        sourceInterface: edge.data?.sourceInterface ?? '',
+        targetComponentId: edge.target,
+        targetComponentName: nodes.find((node) => node.id === edge.target)?.data.displayName ?? edge.target,
+        targetInterface: edge.data?.targetInterface ?? '',
+        connectionType: edge.data?.connectionType ?? 'network',
+        notes: edge.data?.notes ?? '',
+      })),
+      middleware: servers.flatMap((node) => node.data.middleware.map((item) => ({
+        id: item.id,
+        serverId: node.id,
+        serverName: node.data.displayName,
+        hostname: node.data.hostname,
+        category: item.category,
+        name: item.name,
+        version: item.version,
+        port: item.port,
+        runtime: item.runtimes.map((runtime) => [runtime.name, runtime.version].filter(Boolean).join(' ')).filter(Boolean).join(' / ') || item.runtime,
+        configurationNote: item.configurationNote,
+      }))),
+      validationResults: validations.map((item, index) => ({
+        ruleId: `validation-${index + 1}`,
+        severity: item.severity,
+        message: item.message,
+        componentIds: item.nodeIds,
+        componentNames: item.nodeIds.map((id) => nodes.find((node) => node.id === id)?.data.displayName ?? id),
+      })),
+    }
+  }
+
+  const exportExcelFromTemplate = async () => {
+    if (!templateWorkbookFile || !templateMappingFile) {
+      setSaveMessage(t('status.templateFilesRequired'))
+      return
+    }
+    if (!/\.xlsx$/i.test(templateWorkbookFile.name)) {
+      setSaveMessage(t('status.templateWorkbookRequired'))
+      return
+    }
+    setSaveMessage(t('status.templateExcelCreating'))
+    try {
+      const mapping = parseExportTemplateMapping(JSON.parse(await templateMappingFile.text()))
+      const ExcelJS = await import('exceljs')
+      const workbook = new ExcelJS.Workbook()
+      await workbook.xlsx.load(await templateWorkbookFile.arrayBuffer())
+      const level1 = levelOneDiagramSvg(nodes, edges, t)
+      const images: Record<string, TemplateImage> = {
+        'diagrams.level1': {
+          base64: await svgToPng(level1.svg, level1.width, level1.height),
+          width: level1.width,
+          height: level1.height,
+        },
+      }
+      applyExportTemplate(workbook, mapping, createTemplateExportModel(), images)
+      const safeName = projectName.trim().replace(/[\\/:*?"<>|]/g, '_') || 'server-design'
+      const templateName = mapping.templateId.replace(/[^a-zA-Z0-9_-]/g, '_') || 'template'
+      downloadBlob(`${safeName}_${templateName}.xlsx`, new Blob([await workbook.xlsx.writeBuffer()], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }))
+      setShowTemplateExportDialog(false)
+      setSaveMessage(tf('status.templateExcelExported', { template: mapping.templateId }))
+    } catch (error) {
+      console.error(error)
+      const reason = error instanceof Error && isTranslationKey(error.message) ? t(error.message) : ''
+      setSaveMessage(reason ? tf('status.templateExcelExportFailedReason', { reason }) : t('status.templateExcelExportFailed'))
+    }
+  }
+
   const connectionLabel = (edge: Edge<ConnectionData>) => `${nodes.find((node) => node.id === edge.source)?.data.displayName ?? edge.source} → ${nodes.find((node) => node.id === edge.target)?.data.displayName ?? edge.target}`
 
   return (
@@ -1959,7 +2089,7 @@ export default function App() {
             {cloudApiConfigured && <><span className="menu-divider" /><button role="menuitem" onClick={runMenuAction(saveToCloud)}>{t('action.saveCloud')}</button><button role="menuitem" onClick={runMenuAction(openCloudLibrary)}>{t('action.openCloud')}</button></>}
             <span className="menu-divider" />
             <div className="menu-submenu"><button role="menuitem" aria-haspopup="menu" aria-expanded={openFileSubmenu === 'import'} onClick={() => setOpenFileSubmenu((current) => current === 'import' ? null : 'import')}>{t('menu.import')}<span aria-hidden="true">›</span></button>{openFileSubmenu === 'import' && <div className="menu-dropdown nested" role="menu"><button role="menuitem" onClick={runMenuAction(() => fileInput.current?.click())}>{t('action.openJson')}</button></div>}</div>
-            <div className="menu-submenu"><button role="menuitem" aria-haspopup="menu" aria-expanded={openFileSubmenu === 'export'} onClick={() => setOpenFileSubmenu((current) => current === 'export' ? null : 'export')}>{t('menu.export')}<span aria-hidden="true">›</span></button>{openFileSubmenu === 'export' && <div className="menu-dropdown nested" role="menu"><button role="menuitem" onClick={runMenuAction(saveProject)}>{t('action.exportJson')}</button><button role="menuitem" onClick={runMenuAction(exportCsv)}>{t('action.exportCsv')}</button><button role="menuitem" onClick={runMenuAction(exportExcel)}>{t('action.exportExcel')}</button></div>}</div>
+            <div className="menu-submenu"><button role="menuitem" aria-haspopup="menu" aria-expanded={openFileSubmenu === 'export'} onClick={() => setOpenFileSubmenu((current) => current === 'export' ? null : 'export')}>{t('menu.export')}<span aria-hidden="true">›</span></button>{openFileSubmenu === 'export' && <div className="menu-dropdown nested" role="menu"><button role="menuitem" onClick={runMenuAction(saveProject)}>{t('action.exportJson')}</button><button role="menuitem" onClick={runMenuAction(exportCsv)}>{t('action.exportCsv')}</button><button role="menuitem" onClick={runMenuAction(exportExcel)}>{t('action.exportExcel')}</button><span className="menu-divider" /><button role="menuitem" onClick={runMenuAction(() => setShowTemplateExportDialog(true))}>{t('action.exportExcelTemplate')}</button></div>}</div>
           </div>}
         </div>
         <div className="menu-group">
@@ -2004,6 +2134,17 @@ export default function App() {
       </nav>
 
       {saveMessage && <div className="save-message" role="status">{saveMessage}</div>}
+      {showTemplateExportDialog && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowTemplateExportDialog(false) }}>
+        <section className="template-export-dialog panel" role="dialog" aria-modal="true" aria-label={t('dialog.excelTemplateExport')} onMouseDown={(event) => event.stopPropagation()}>
+          <div className="panel-heading"><div><h2>{t('dialog.excelTemplateExport')}</h2><p>{t('templateExport.description')}</p></div><button onClick={() => setShowTemplateExportDialog(false)}>{t('action.close')}</button></div>
+          <div className="template-export-fields">
+            <label>{t('templateExport.workbookLabel')}<input ref={templateWorkbookInput} type="file" accept="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx" onChange={(event) => setTemplateWorkbookFile(event.target.files?.[0] ?? null)} /><small>{templateWorkbookFile?.name ?? t('templateExport.noFile')}</small></label>
+            <label>{t('templateExport.mappingLabel')}<input ref={templateMappingInput} type="file" accept="application/json,.json" onChange={(event) => setTemplateMappingFile(event.target.files?.[0] ?? null)} /><small>{templateMappingFile?.name ?? t('templateExport.noFile')}</small></label>
+          </div>
+          <div className="template-export-note"><strong>{t('templateExport.supportedTitle')}</strong><p>{t('templateExport.supportedDescription')}</p><p>{t('templateExport.securityNote')}</p></div>
+          <div className="template-export-actions"><button onClick={() => { setTemplateWorkbookFile(null); setTemplateMappingFile(null); if (templateWorkbookInput.current) templateWorkbookInput.current.value = ''; if (templateMappingInput.current) templateMappingInput.current.value = '' }}>{t('templateExport.clearFiles')}</button><button className="primary" onClick={() => void exportExcelFromTemplate()}>{t('templateExport.run')}</button></div>
+        </section>
+      </div>}
       {templatePickerMode && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setTemplatePickerMode(null) }}>
         <section className="template-picker panel" role="dialog" aria-modal="true" aria-label={t('dialog.layoutTemplate')} onMouseDown={(event) => event.stopPropagation()}>
           <div className="panel-heading"><div><h2>{t(templatePickerMode === 'new' ? '新規作成：レイアウトテンプレート' : '現在の構成：レイアウトを変更')}</h2><p>{t(templatePickerMode === 'new' ? 'template.description.new' : 'template.description.change')}</p></div><button onClick={() => setTemplatePickerMode(null)}>{t('閉じる')}</button></div>

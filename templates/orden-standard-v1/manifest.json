@@ -1,0 +1,12 @@
+{
+  "id": "orden-standard-v1",
+  "name": {
+    "ja": "Orden 標準設計情報テンプレート",
+    "en": "Orden standard design information template"
+  },
+  "version": "1.0.0",
+  "ordenExportSchema": "1.x",
+  "mappingFile": "mapping.json",
+  "templateFile": "template.xlsx",
+  "capabilities": ["cells", "tables", "images"]
+}
