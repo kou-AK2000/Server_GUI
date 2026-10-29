@@ -1,6 +1,6 @@
 # Orden standard template v1
 
-これは `mapping.json` の動作例です。Excelテンプレート側には、次のシートを同じ名前で作成してください。
+これは、すぐに試せる `template.xlsx` と `mapping.json` の組です。アプリからこの2ファイルを選択すると、現在のOrdenデータを雛形の位置へ出力できます。Excelテンプレート側には、次のシートがあらかじめ含まれています。
 
 - `表紙`
 - `全体構成図`
